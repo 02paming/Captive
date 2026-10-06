@@ -241,7 +241,6 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
     char redirectMsg[] = "HTTP/1.1 302 Found\r\n"
                          "Location: http://httpforever.com\r\n"
                          "Content-Length: 0\r\n"
-                         "Connection: close\r\n"
                          "\r\n";
     int fake_payload_len = strlen(redirectMsg); // 널을 뺀 실제 길이를 구해서
 
@@ -338,47 +337,66 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
 
     pcap_inject(handle_inject, fake_packet, sizeof(struct ether_header) + sizeof(struct ip) + fake_tcp_size + fake_payload_len);
 
-    // //2차 RST 주입
+
+    fake_eth = (struct ether_header *)fake_packet;
+    fake_ip = (struct ip *)(fake_packet + sizeof(struct ether_header));
+    fake_tcp = (struct tcphdr *)(fake_packet + sizeof(struct ether_header) + sizeof(struct ip));
+
+    // //2차 RST 주입========================================================
+    
+    // 1. TCP 플래그를 RST 변경
     fake_tcp->th_flags = TH_RST;
+    fake_tcp->th_off = 5; 
 
-    //가짜패킷 1차때썻던거 재활용이므로 소스,데스 다시바꿔주기(원상복구)
+    // 2. L2 MAC 주소 원상복구 (타깃 PC -> 진짜 서버)
+    memcpy(fake_eth->ether_shost, ethernet->ether_shost, ETH_ALEN); 
+    memcpy(fake_eth->ether_dhost, ethernet->ether_dhost, ETH_ALEN);
 
+    // 3. L3 IP 헤더 총 길이 수정 및 주소 원상복구
+    // 페이로드가 완전히 빠지므로 IP 총 길이는 IP헤더(20) + TCP기본헤더(20) = 40
+    fake_ip->ip_len = htons(sizeof(struct ip) + 20); 
+    
+    // 출발지 = 타깃 PC IP, 목적지 = 진짜 서버 IP
+    fake_ip->ip_src.s_addr = inet_addr(fake_des_ip);
+    fake_ip->ip_dst.s_addr = inet_addr(fake_src_ip);
 
-    // 순수 기본 TCP 헤더만 날아가므로 IP 총 길이는 [IP헤더(20) + TCP순수헤더(20) = 40바이트]로 고정됩니다.
-    fake_ip->ip_len = htons(sizeof(struct ip) + fake_tcp_size);
+    // 4. 포트 및 seq/ack 번호 조립 
+    fake_tcp->th_sport = htons(fake_des_port); 
+    fake_tcp->th_dport = htons(fake_src_port); 
 
-    // printf("페이크 페이로드 %d\n", fake_payload_len);
+    uint32_t rst_correct_seq = c_seq + payload_size; 
+    
+    fake_tcp->th_seq = htonl(rst_correct_seq); 
+    fake_tcp->th_ack = 0;  
 
-    // uint32_t rst_seq  = fake_seq + fake_payload_len;
-
-    // fake_tcp->th_off = 5; //리셋
-
-    fake_tcp->th_seq = htonl(c_seq + payload_size);
-    fake_tcp->th_ack = htonl(fake_seq + fake_payload_len);
-
-
-    // 바뀐 헤더 구조에 맞추어 체크섬 장부를 완전히 초기화합니다.
+    // 5. 기존 체크섬 장부를 0으로 우선초기화
     fake_ip->ip_sum = 0;
     fake_tcp->th_sum = 0;
 
-    // 1. L3 IP 헤더 체크섬 재계산 (순수 20바이트)
+    // 6. IP 체크섬 재계산
     fake_ip->ip_sum = csum((unsigned short*)fake_ip, sizeof(struct ip));
 
-    // 2. L4 TCP 가상 헤더의 길이를 순수한 TCP 기본 헤더 크기(20바이트)로 칼같이 동기화합니다.
-    check_tcp.tcp_length = htons(20);
+    // 7.TCP 가상 헤더 장부도 바뀐 IP 및 순수 TCP 크기(20)으로 새로 대입
+    check_tcp.source_address = fake_ip->ip_src.s_addr;
+    check_tcp.dest_address = fake_ip->ip_dst.s_addr;
+    check_tcp.placeholder = 0;
+    check_tcp.protocol = IPPROTO_TCP;
+    check_tcp.tcp_length = htons(20); // 302 페이로드가 빠졌으므로 칼같이 20바이트로 수정
 
-    // 3. 찌꺼기가 단 1비트도 섞이지 않는 깨끗한 체크섬 전용 임시 버퍼 조립
+    // 8. 찌꺼기가 섞이지 않는 깨끗한 체크섬 전용 임시 버퍼 조립
     u_char temp_buf_2[1500];
-    memset(temp_buf_2, 0, 1500); // 전체를 0으로 완벽 청소
+    memset(temp_buf_2, 0, 1500); 
     memcpy(temp_buf_2, &check_tcp, sizeof(check_tcp));
-    // 타임스탬프 옵션 찌꺼기가 제외된 순수한 기본 TCP 헤더(20바이트)만 정밀 병합
-    memcpy(temp_buf_2 + sizeof(check_tcp), fake_tcp, fake_tcp_size);
+    // 옵션과 페이로드가 전부 제외된 순수한 기본 TCP 헤더(20바이트)만 정밀 복사
+    memcpy(temp_buf_2 + sizeof(check_tcp), fake_tcp, 20);
 
-    // 4. L4 TCP 헤더 체크섬 재계산 (단 1비트의 오차도 없이 Correct 마크 획득)
-    fake_tcp->th_sum = csum((unsigned short*)temp_buf_2, sizeof(check_tcp) + fake_tcp_size);
+    // L4 TCP 헤더 체크섬 재계산
+    fake_tcp->th_sum = csum((unsigned short*)temp_buf_2, sizeof(check_tcp) + 20);
 
-    // 5. 2차 RST 주입 최종 발사! (데이터와 옵션이 모두 빠진 순수 14 + 20 + 20 = 54바이트만 물리적으로 칼같이 커트해서 전송)
-    pcap_inject(handle_inject, fake_packet, sizeof(struct ether_header) + sizeof(struct ip) + fake_tcp_size);
+    // 9. 2차 RST 주입
+    // 데이터와 302 옵션 찌꺼기가 완전히 무시되도록 딱 54바이트(14+20+20)만 칼같이 잘라서 전송합니다.
+    pcap_inject(handle_inject, fake_packet, sizeof(struct ether_header) + sizeof(struct ip) + 20);
+    
 }
 
 // 인터넷 표준 Checksum 계산 함수
