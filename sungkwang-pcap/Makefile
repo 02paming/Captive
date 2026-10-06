@@ -1,9 +1,9 @@
 CC      = gcc
 CFLAGS  = -Wall -Wextra -g
-LDFLAGS = -lpcap
+LDFLAGS = -lpcap -pthread
 TARGET  = my_pcap_app
 
-SRCS    = main.c packet_handler.c inject_redirect.c inject_rst.c utils.c
+SRCS    = main.c packet_handler.c inject_redirect.c inject_rst.c utils.c uds_thread.c
 HEADERS = pcap_project.h
 OBJS    = $(SRCS:.c=.o)
 

