@@ -131,3 +131,52 @@ BEGIN
     DELETE FROM internal_db.employees WHERE deleted_at IS NOT NULL AND deleted_at <= DATE_SUB(CURDATE(), INTERVAL 5 YEAR);
     DELETE FROM internal_db.no_access_addr WHERE deleted_at IS NOT NULL AND deleted_at <= DATE_SUB(CURDATE(), INTERVAL 5 YEAR);
 END
+
+
+
+-- 직원 테이블 초기화
+SET FOREIGN_KEY_CHECKS = 0;   -- 외래키 체크 해제
+TRUNCATE TABLE employees;     -- 테이블 초기화 (AUTO_INCREMENT도 1로 리셋됨)
+SET FOREIGN_KEY_CHECKS = 1;   -- 외래키 체크 다시 켜기
+
+-- 내부망 로그인 초기화
+TRUNCATE TABLE online_ip;
+
+-- 직원 테이블 더미 데이터 150개 생성
+INSERT INTO employees (
+    employee_id, password, name, email, address, phone_number, jumin_no, hire_date, is_manager, deleted_at
+)
+WITH RECURSIVE dummy_gen AS (
+    -- 1부터 시작
+    SELECT 1 AS n
+    UNION ALL
+    -- 150이 될 때까지 1씩 증가시키며 반복
+    SELECT n + 1 FROM dummy_gen WHERE n < 150
+)
+SELECT 
+    CONCAT('admin', n),                           -- employee_id: admin1 ~ admin150
+    'admin',                                      -- password: 모두 admin
+    CONCAT('더미사원', n),                        -- name: 더미사원1 ~ 더미사원150
+    CONCAT('admin', n, '@company.com'),           -- email: 중복 방지를 위해 번호 부여
+    '더미 주소',                                  -- address: 공통 주소
+    CONCAT('010', LPAD(n, 8, '0')),               -- phone_number: 01000000001 ~ (11자리 UNIQUE 맞춤)
+    CONCAT('9901011', LPAD(n, 6, '0')),           -- jumin_no: 9901011000001 ~ (13자리 UNIQUE 맞춤)
+    CURRENT_DATE,                                 -- hire_date: 오늘 날짜
+    IF(n = 1, 1, 0),                              -- is_manager: n이 1(admin1)일 때만 1(True), 나머지는 0(False)
+    NULL                                          -- deleted_at: 모두 현직(NULL)
+FROM dummy_gen;
+
+
+
+-- no_access_addr 테이블에 더미데이터 10개 생성
+INSERT INTO no_access_addr (no_access_domain) VALUES 
+('http://malicious-site01.com'),
+('http://unwanted-ads02.net'),
+('http://fake-login03.org'),
+('http://spam-server04.co.kr'),
+('http://phishing-test05.com'),
+('http://illegal-stream06.net'),
+('http://virus-dist07.org'),
+('http://hacked-domain08.com'),
+('http://block-target09.co.kr'),
+('http://warning-page10.com');
