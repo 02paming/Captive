@@ -167,7 +167,6 @@ SELECT
 FROM dummy_gen;
 
 
-
 -- no_access_addr 테이블에 더미데이터 10개 생성
 INSERT INTO no_access_addr (no_access_domain) VALUES 
 ('http://malicious-site01.com'),
@@ -180,3 +179,28 @@ INSERT INTO no_access_addr (no_access_domain) VALUES
 ('http://hacked-domain08.com'),
 ('http://block-target09.co.kr'),
 ('http://warning-page10.com');
+
+-- no_access_addr 테이블에 데이터 추가
+INSERT INTO no_access_addr (no_access_domain, deleted_at) 
+VALUES ('http://neverssh.com/', NULL)
+ON DUPLICATE KEY UPDATE deleted_at = NULL;
+
+-- no_access_addr, no_access_addr_log 테이블의 online_ip 필드의 자료형 속성 변경(varchar->int)
+-- 1. 줄바꿈(\n, \r) 및 양옆 공백 제거 후, 마지막 '.' 뒤의 값만 추출
+UPDATE online_ip 
+SET online_ip = TRIM(BOTH '\n' FROM TRIM(BOTH '\r' FROM TRIM(SUBSTRING_INDEX(online_ip, '.', -1))));
+
+UPDATE online_ip_log 
+SET online_ip = TRIM(BOTH '\n' FROM TRIM(BOTH '\r' FROM TRIM(SUBSTRING_INDEX(online_ip, '.', -1))));
+
+-- 2. 'None'이나 빈칸 등 숫자가 아닌 잘못된 데이터는 삭제(또는 0으로 초기화)
+DELETE FROM online_ip WHERE online_ip NOT REGEXP '^[0-9]+$';
+DELETE FROM online_ip_log WHERE online_ip NOT REGEXP '^[0-9]+$';
+
+-- 3. 이제 순수 숫자만 남았으므로 컬럼 타입을 INT로 안전하게 변경
+ALTER TABLE online_ip MODIFY COLUMN online_ip INT NOT NULL;
+ALTER TABLE online_ip_log MODIFY COLUMN online_ip INT NOT NULL;
+
+-- 4. 변경 결과 확인 (Type이 int(11)로 나오면 성공!)
+DESC online_ip;
+DESC online_ip_log;
