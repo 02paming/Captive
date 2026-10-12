@@ -66,6 +66,12 @@ void* clean_thread(void* arg) {
 
             //인증됬다면
             if(whitelist[i].is_active == 1){
+
+                int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+                if (sockfd < 0) {
+                    perror("UDS 소켓 생성 실패");
+                    continue;
+                }
         
                 //30일뒤면 절대적으로 인증초기화(우선은 테스트용으로 3분으로함)
                 if (current_time > whitelist[i].expire_time) {
@@ -74,35 +80,21 @@ void* clean_thread(void* arg) {
                     whitelist[i].is_mac_bound = 0;
                     whitelist[i].expire_time = 0;
 
-                    //UDS 소켓 부분 (아래 7일쪽에도 서야하므로 추후 함수화해야할수도있음)
-                    int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
-                    if (sockfd < 0) {
-                        perror("UDS 소켓 생성 실패");
-                        continue;
-                    }
-                    
-                    struct sockaddr_un addr;
-                    memset(&addr, 0, sizeof(addr));
-                    addr.sun_family = AF_UNIX;
-                    strncpy(addr.sun_path, GC_SOCKET_PATH, sizeof(addr.sun_path) - 1);
-
-                    // 2. 파이썬 서버로 연결 시도 (안 켜져 있으면 에러 반환하고 무시함)
-                    if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-                        char msg[32];
-                        sprintf(msg, "%d\n", i); // 예: "50\n"
-                        
-                        // 3. 차단된 Host ID 전송 후 즉시 연결 종료
-                        write(sockfd, msg, strlen(msg)); //순수 50크기만 쏨 \n제외
-                    }
-                    close(sockfd); // 클라이언트 소켓은 다 쓰면 닫아버림
-                    
+                    //UDS 소켓 부분
+                    uds_client_sock(sockfd,i);
                 }
 
                 //7일동안 아무 활동이없으면 인증초기화 (else if쓴 이유는 30일동안 지나서 위if 걸리고나서 인증초기화되면 굳이 이 if문 안와도됨)
                 else if((current_time - whitelist[i].last_seen) > (7 * 24 * 60 * 60)) {
+                    printf("7일동안 미활동ip입니다. 재인증하십시오.\n");
                     whitelist[i].is_active = 0;
                     whitelist[i].is_mac_bound = 0;
-                }    
+                    whitelist[i].expire_time = 0;
+
+                    uds_client_sock(sockfd,i);
+                }
+                
+                close(sockfd); // 클라이언트 소켓은 다 쓰면 닫아버림
             }
         }
 

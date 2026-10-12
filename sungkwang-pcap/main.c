@@ -6,13 +6,45 @@ typedef struct Device {
   pcap_t *handle;
 } Device;
 
-int whitelist[256] = {0}; 
-pthread_mutex_t lock;
+
+
+AuthRecord whitelist[256] = {0}; 
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+volatile sig_atomic_t keep_running = 1;
+int server_fd = -1;
+pcap_t* handle = NULL; //추후에 그냥 여기쓸거 구조체변수를 전역으로 빼볼생각 (코드정리)
+//지금 devices[0].handle를 시그널함수에 가져다 못쓰기때문에(main함수에서 구조체변수로만들어진놈이라 stack영역으로 지역변수임)
+uint8_t latest_mac_cache[256][6] = {0};
+
+void handle_sigint(int sig) {
+    printf("\n[Main] 종료 신호 감지! 스레드들을 깨웁니다...\n");
+    keep_running = 0; // 깃발 내리기
+    
+    // 1. 자고 있는 GC 스레드 강제 기상 (비상벨)
+    pthread_cond_signal(&cond);
+    
+    // 2. UDS 소켓 대기 깨우기
+    printf("[Main] 시그널 핸들러가 조준 중인 번호: %d\n", server_fd);
+    if (server_fd != -1){
+      shutdown(server_fd, SHUT_RDWR);
+    }
+    
+    // 3. PCAP 무한루프 깨우기
+    if (handle != NULL) 
+    pcap_breakloop(handle);
+    
+}
 
 int main(void) {
+
+  signal(SIGINT, handle_sigint); //컨트롤 C 용 시그널
+  signal(SIGTERM, handle_sigint); // 서버 재부팅, os업데이트,서비스재시작용 시그널
+
   char errbuf[PCAP_ERRBUF_SIZE];
   struct bpf_program filter;
-  char filter_exp[] = "tcp port 80";
+  char filter_exp[] = "src net 192.168.2.0 mask 255.255.255.0 and tcp "
+                        "dst port 80 and dst host not 192.168.3.243";
 
   pcap_if_t *alldevs, *target;
   Device devices[3] = {
@@ -53,10 +85,20 @@ int main(void) {
   printf("mirror(캡쳐용) Device : %s\n", devices[0].dev->name);
   printf("Inject(인젝션용) Device  : %s\n", devices[2].dev->name);
 
+  pthread_condattr_t attr;
+  pthread_condattr_init(&attr);
+  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+  pthread_cond_init(&cond, &attr);
+  pthread_condattr_destroy(&attr);
+
   // 3.5 UDS 수신 대기하는 스레드 생성
-  pthread_t uds_tid;
+  pthread_t uds_tid,clean_tid;
     if (pthread_create(&uds_tid, NULL, uds_server_thread, NULL) != 0) {
         fprintf(stderr, "UDS 스레드 생성 실패\n");
+        return 1;
+    }
+    if (pthread_create(&clean_tid, NULL, clean_thread, NULL) != 0) {
+        fprintf(stderr, "clean 스레드 생성 실패\n");
         return 1;
     }
 
@@ -69,6 +111,8 @@ int main(void) {
     pcap_freealldevs(alldevs);
     return 1;
   }
+
+  handle = devices[0].handle; //pcap_loop 핸들 전역변수에 쓰기 (pcap_loop 부수는용)
 
   pcap_setdirection(devices[0].handle, PCAP_D_IN);  // rx
   pcap_setdirection(devices[2].handle, PCAP_D_OUT); // tx
@@ -97,13 +141,20 @@ int main(void) {
   // 7. 루프시작(인젝트는 args로 넘김)
   pcap_loop(devices[0].handle, 0, packet_handler, (u_char *)devices[2].handle);
 
-  // 8. 자원반납(역순)
+  // // 8. 자원반납(역순)
   pcap_close(devices[0].handle);
   pcap_close(devices[2].handle);
-  pthread_cancel(uds_tid); //이제 이 id의 스레드 종료하라고 신호보내는것
-  pthread_join(uds_tid, NULL); //실제로 종료될때까지 현재 스레드가 대기, 과거 좀비프로세스마냥 이 과정이없으면 스레드가 좀비로 남아있을수있음
+
+  pthread_join(clean_tid,NULL);
+  pthread_join(uds_tid, NULL); //실제로 종료될때까지 현재 스레드가 대기, 과거 좀비프로세스 마냥 이 과정이없으면 스레드가 좀비로 남아있을수있음
+  unlink(GC_SOCKET_PATH); // 꺼지기전 파일 (rm)지우고가기
+
   pthread_mutex_destroy(&lock);
+  pthread_cond_destroy(&cond);
+
   pcap_freealldevs(alldevs);
+  printf("loop 이후 자원반납 깔끔하게 싹 하고 return 0 됨\n");
+
 
   return 0;
 }
