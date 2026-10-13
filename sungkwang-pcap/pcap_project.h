@@ -51,7 +51,7 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header,
                     const u_char *packet);
 unsigned short csum(unsigned short *ptr, int nbytes);
 
-void uds_client_sock(int sockfd,int ip);
+void uds_client_sock(const int ip);
 
 int packet_mac_check(const int host_id, const uint8_t* packet_mac);
 

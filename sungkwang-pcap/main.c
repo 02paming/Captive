@@ -97,6 +97,16 @@ int main(void) {
         fprintf(stderr, "UDS 스레드 생성 실패\n");
         return 1;
     }
+
+//uds쓰레드 열었으면 초기동기화 진행 
+    printf("[시스템] 초기 동기화 스크립트를 실행합니다...\n");
+    
+    // 파이썬 스크립트가 실행을 마치고 꺼질 때까지 main 함수는 여기서 블락
+    system("/root/Captive_Web/venv/bin/python /root/intranet-access-controller/sungkwang-pcap/sync_runner.py"); //가상환경의 파이썬에서 
+
+    //동기화가 완전히 끝난 후 아래코드들 진행
+    printf("[시스템] 동기화 완료! PCAP 패킷 감시를 시작합니다.\n");
+
     if (pthread_create(&clean_tid, NULL, clean_thread, NULL) != 0) {
         fprintf(stderr, "clean 스레드 생성 실패\n");
         return 1;
@@ -147,7 +157,7 @@ int main(void) {
 
   pthread_join(clean_tid,NULL);
   pthread_join(uds_tid, NULL); //실제로 종료될때까지 현재 스레드가 대기, 과거 좀비프로세스 마냥 이 과정이없으면 스레드가 좀비로 남아있을수있음
-  unlink(GC_SOCKET_PATH); // 꺼지기전 파일 (rm)지우고가기
+  unlink(SOCKET_PATH); // 끄기전 기존 uds서버역할을한 파일경로 지우고가기 rm느낌
 
   pthread_mutex_destroy(&lock);
   pthread_cond_destroy(&cond);

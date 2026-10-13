@@ -13,7 +13,7 @@ void* uds_server_thread(void* arg) {
         return NULL;
     }
 
-    unlink(SOCKET_PATH); // 기존에 남아있는 소켓 파일 찌꺼기 삭제
+    unlink(SOCKET_PATH); // 끄기전 기존 uds서버역할을한 파일경로 지우고가기 rm느낌
 
     memset(&addr, 0, sizeof(addr)); 
     addr.sun_family = AF_UNIX;
@@ -32,6 +32,7 @@ void* uds_server_thread(void* arg) {
     }
 
     while(keep_running) {
+        // printf("1. [UDS 스레드] accept 대기 중...\n");
         client_fd = accept(server_fd, NULL, NULL); 
         if (client_fd < 0) {
             printf("[UDS 스레드] 종료 신호 확인.\n");
@@ -57,6 +58,7 @@ void* uds_server_thread(void* arg) {
                 if (host_id >= 0 && host_id < 254) { 
 
                     // [추가된 로직] 0. 파이썬의 MAC 조회 요청 (GETMAC) 처리
+                    // printf("2. [UDS 스레드] 클라이언트 연결됨! 데이터 읽기 시작...\n");
                     if (strcmp(command, "GETMAC") == 0) {
                         
                         // 캐시에 값이 비어있는지(00:00...) 먼저 확인
@@ -101,7 +103,7 @@ void* uds_server_thread(void* arg) {
                                 whitelist[host_id].is_active = 1; 
                                 whitelist[host_id].is_mac_bound = 1; 
                                 whitelist[host_id].last_seen = cur_time;
-                                whitelist[host_id].expire_time = cur_time + 600; // 테스트용 60초
+                                whitelist[host_id].expire_time = cur_time + 600; // 테스트용 1분
                                 
                                 printf("[UDS 스레드] Host ID %d 신규 인증 완료! (MAC: %s)\n", host_id, mac_str);
                             } else {
@@ -153,6 +155,7 @@ void* uds_server_thread(void* arg) {
             }
         }
         close(client_fd);
+        // printf("3. [UDS 스레드] 클라이언트 종료 및 통신 완료. 다시 돌아갑니다!\n\n");
     }
     
     return NULL;

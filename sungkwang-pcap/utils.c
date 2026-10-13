@@ -23,13 +23,20 @@ unsigned short csum(unsigned short *ptr, int nbytes)
     return (answer);
 }
 
-void uds_client_sock(const int sockfd,const int ip){
+void uds_client_sock(const int ip){
+
+    int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (sockfd < 0) {
+            perror("UDS 소켓 생성 실패");
+            return;
+        }
 
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, GC_SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
+    // printf("잘 날아갔나? 1\n");
     // 파이썬 서버로 연결 시도 (안 켜져 있으면 에러 반환하고 무시함)
     if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
         char msg[32];
@@ -37,7 +44,12 @@ void uds_client_sock(const int sockfd,const int ip){
         
         // 차단된 Host ID 전송 후 즉시 연결 종료
         write(sockfd, msg, strlen(msg)); //순수 50크기만 쏨 \n제외
+        // printf("잘 날아갔나? 2\n");
+    }else{
+        perror("[UDS 클라이언트 에러] 파이썬 GC 소켓 연결 실패");
     }
+
+    close(sockfd); // 클라이언트 소켓은 다 쓰면 닫아버림
 
     return;
 }
