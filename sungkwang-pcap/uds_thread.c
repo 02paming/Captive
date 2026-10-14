@@ -136,7 +136,19 @@ void* uds_server_thread(void* arg) {
                             whitelist[host_id].expire_time = (time_t)expire_timestamp; 
                             
                             printf("[UDS 복구] Host ID %d 복구 완료! (MAC: %s, 만료시간: %ld)\n", host_id, mac_str, whitelist[host_id].expire_time - cur_time);
+                            }
                         }
+
+                        else if (strcmp(command, "RELOAD") == 0) {
+                            printf("UDS 스레드: 관리자가 차단사이트를 갱신함\n");
+                            
+                            // 현재 화이트리스트 뮤텍스(&lock) 안쪽이므로, 
+                            // 블랙리스트 전용 뮤텍스(&check_manager.lock)만 안전하게 추가로 잠금 후 실행
+                            pthread_mutex_lock(&check_manager.lock);
+                            load_blacklist();
+                            pthread_mutex_unlock(&check_manager.lock);
+                            
+                            printf("[갱신완료] 경로 -> \"/tmp/blacklist.txt\", 현재 차단사이트: [%d]개\n", check_manager.count);
                         }
 
                         // 디버깅용 리스트 출력

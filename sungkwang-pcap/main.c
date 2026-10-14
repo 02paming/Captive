@@ -7,7 +7,6 @@ typedef struct Device {
 } Device;
 
 
-
 AuthRecord whitelist[256] = {0}; 
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
@@ -16,6 +15,7 @@ int server_fd = -1;
 pcap_t* handle = NULL; //추후에 그냥 여기쓸거 구조체변수를 전역으로 빼볼생각 (코드정리)
 //지금 devices[0].handle를 시그널함수에 가져다 못쓰기때문에(main함수에서 구조체변수로만들어진놈이라 stack영역으로 지역변수임)
 uint8_t latest_mac_cache[256][6] = {0};
+BlackListInfo check_manager;
 
 void handle_sigint(int sig) {
     printf("\n[Main] 종료 신호 감지! 스레드들을 깨웁니다...\n");
@@ -37,6 +37,14 @@ void handle_sigint(int sig) {
 }
 
 int main(void) {
+
+  //블랙리스트 구조체 전역변수 초기화구문
+  for (int i = 0; i < MAX_BLACKLIST_COUNT; i++)
+    check_manager.target_url[i] = NULL;
+  check_manager.count = 0;
+  pthread_mutex_init(&check_manager.lock, NULL);  
+  
+  load_blacklist();
 
   signal(SIGINT, handle_sigint); //컨트롤 C 용 시그널
   signal(SIGTERM, handle_sigint); // 서버 재부팅, os업데이트,서비스재시작용 시그널

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>사내망 보안 인증</title>
+    <style>
+        /* 기본 배경과 화면 중앙 정렬 */
+        body {
+            font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+            background-color: #f4f7f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        /* 가운데 하얀색 카드 박스 */
+        .login-card {
+            background-color: white;
+            padding: 40px 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        /* 제목과 텍스트 꾸미기 */
+        .title {
+            font-size: 22px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .warning-text {
+            color: #e74c3c;
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        .info-text {
+            color: #7f8c8d;
+            font-size: 14px;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+
+        /* 입력 폼 꾸미기 */
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #34495e;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #bdc3c7;
+            border-radius: 5px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 5px rgba(52, 152, 219, 0.5);
+        }
+
+        /* 버튼 꾸미기 */
+        .submit-btn {
+            width: 100%;
+            padding: 14px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .submit-btn:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="login-card">
+        <div class="title">🛡️ 사내망 보안 포털</div>
+        <div class="warning-text">비인가 사이트 접근 차단</div>
+        <div class="info-text">보안 규정에 따라 사번 인증 후<br>원래 페이지로 이동할 수 있습니다.</div>
+
+        <!-- 데이터 전송 폼 -->
+        <form action="/auth" method="POST">
+            <div class="form-group">
+                <label for="name">이름</label>
+                <input type="text" id="name" name="emp_name" placeholder="이름을 입력하세요" required>
+            </div>
+            <div class="form-group">
+                <label for="number">사번</label>
+                <input type="text" id="number" name="emp_number" placeholder="사번을 입력하세요" required>
+            </div>
+            <button type="submit" class="submit-btn">인증 요청</button>
+        </form>
+    </div>
+</body>
+
+</html>

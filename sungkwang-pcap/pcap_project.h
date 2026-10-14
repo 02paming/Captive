@@ -1,3 +1,8 @@
+#define _DEFAULT_SOURCE
+#define __USE_BSD
+#define _GNU_SOURCE       // memmem 같은 GNU 확장 함수를 쓰겠다고 선언
+#define __FAVOR_BSD       // th_seq, th_sport 같은 유닉스(BSD) 스타일 구조체 이름을 쓰겠다고 선언
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,11 +20,18 @@
 #include <netinet/tcp.h>
 #include <time.h>
 #include <signal.h>
+#include <stdbool.h>
 
-
+#define MAX_BLACKLIST_COUNT 128
 
 #define SOCKET_PATH "/tmp/authrized_ip"
 #define GC_SOCKET_PATH  "/tmp/pcap_gc.sock"
+
+typedef struct {
+  char *target_url[MAX_BLACKLIST_COUNT];
+  u_int count;
+  pthread_mutex_t lock;
+} BlackListInfo;
 
 typedef struct {
     int is_active;           // 1: 인증됨, 0: 차단
@@ -36,6 +48,7 @@ extern volatile sig_atomic_t keep_running;
 extern int server_fd;
 extern pcap_t *handle;
 extern uint8_t latest_mac_cache[256][6];
+extern BlackListInfo check_manager;
 
 // TCP Checksum 계산을 위한 가상 헤더 구조체
 typedef struct {
@@ -57,11 +70,17 @@ int packet_mac_check(const int host_id, const uint8_t* packet_mac);
 
 void* uds_server_thread(void* arg);
 void* clean_thread(void* arg);
+void load_blacklist(void);
 
 // 인젝션 함수 모듈화
 void inject_redirect(pcap_t *handle_inject, const struct ether_header *ethernet,
                      const struct ip *ip, const struct tcphdr *tcp,
                      uint32_t payload_size);
+
+void inject_redirect_blocked(pcap_t *handle_inject, const struct ether_header *ethernet, 
+                      const struct ip *ip, const struct tcphdr *tcp,
+                      uint32_t payload_size);
+
 void inject_rst(pcap_t *handle_inject, const struct ether_header *ethernet,
                 const struct ip *ip, const struct tcphdr *tcp,
                 uint32_t payload_size);

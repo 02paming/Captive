@@ -90,3 +90,32 @@ int packet_mac_check(const int host_id, const uint8_t* packet_mac){
 
     return is_authenticated;
 }
+
+void load_blacklist(void) {
+  if (check_manager.target_url[0] != NULL) {
+    for (int i = 0; i < check_manager.count; i++)
+      free(check_manager.target_url[i]);
+  }
+
+  FILE *fp = fopen("/tmp/blacklist.txt", "r");
+  if (fp == NULL) {
+    printf("UDS스레드: 연결할 파일이 없습니다.\n");
+    return;
+  }
+
+  char line[256];
+  int count = 0;
+
+  while (fgets(line, sizeof(line), fp) != NULL && count < MAX_BLACKLIST_COUNT) {
+    line[strcspn(line, "\r\n")] = '\0';
+
+    if (strlen(line) > 0) {
+      check_manager.target_url[count] = strdup(line);
+      count++;
+    }
+  }
+  check_manager.count = count;
+  printf("UDS 스레드: 접근제한사이트 갱신 완료. 현재 총 [%d]개 유지중\n",
+         count);
+  fclose(fp);
+}

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <!-- 3초 뒤 자동 리다이렉트 (회사 홈페이지 주소로 변경할 것) -->
+    <meta http-equiv="refresh" content="3; url=http://192.168.3.23">
+    <title>사내망 인증 완료</title>
+    <style>
+        body {
+            font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+            background-color: #f4f7f6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .card {
+            background: white;
+            padding: 40px 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+
+        .icon {
+            font-size: 55px;
+            margin-bottom: 10px;
+        }
+
+        h2 {
+            color: #27ae60;
+            /* 성공의 초록색 */
+            margin-top: 0;
+            margin-bottom: 15px;
+        }
+
+        p {
+            color: #4a4a4a;
+            line-height: 1.6;
+            margin-bottom: 25px;
+        }
+
+        .highlight {
+            font-weight: bold;
+            color: #2980b9;
+        }
+
+        /* 세련된 버튼 디자인 */
+        .btn {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 15px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn:hover {
+            background-color: #2980b9;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div class="icon">✅</div>
+        <h2>인증이 완료되었습니다!</h2>
+
+        <p><span class="highlight">{{ user_name }}</span>님 (사번: {{ user_emp_number }}) 환영합니다.<br>
+            <span style="color: #7f8c8d; font-size: 13px; display: block; margin-top: 10px;">
+                이제 인터넷을 정상적으로 사용할 수 있습니다.<br>
+                잠시 후 원래 페이지로 이동합니다.
+            </span>
+        </p>
+
+        <!-- 버튼이 카드 div 안에 위치함 -->
+        <button class="btn" onclick="location.href='https://knives-championship-analyst-wear.trycloudflare.com/'">회사 홈페이지로 바로 이동</button>
+    </div>
+</body>
+
+</html>
