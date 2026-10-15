@@ -28,7 +28,23 @@ KEY_EMP_NAME = 'emp_name'       # [___사원이름_변수명___]
 KEY_EMP_NUM = 'emp_number'      # [___사원번호_변수명___]
 KEY_CLIENT_IP = 'user_online_ip'     # [___접속PC_IP_변수명___]
 KEY_CLIENT_MAC = 'user_online_mac'   # [___접속PC_MAC_변수명___]
+KEY_BLACKLIST_DOMAIN = 'blacklist_domain' # [추가] 차단된 도메인 변수명
 PCAP_SERVER_SYNC_URL = "http://192.168.3.243/api/update_domains"
+
+# =========================================================
+# [추가] 웹 서버(Django) 새로고침 요청 URL (블랙리스트 로그용)
+# =========================================================
+# 실제 구축한 웹 서버 API 경로로 변경
+WEB_SERVER_BLACKLIST_REFRESH_URL = "http://127.0.0.1:8000/api/refresh_blacklist_log" 
+
+def trigger_blacklist_refresh():
+    """블랙리스트 로그가 DB에 추가될 때 웹 서버로 알림(HTTP GET)을 보내는 함수"""
+    try:
+        req = urllib.request.Request(WEB_SERVER_BLACKLIST_REFRESH_URL, method="GET")
+        urllib.request.urlopen(req, timeout=2)
+        print("   [웹 서버 알림]: 블랙리스트 접근 로그 갱신 요청 전송 완료")
+    except Exception as e:
+        print(f"   [웹 서버 알림 실패]: {e}")
 
 def parse_request_body(body_str):
     body_str = body_str.strip()
@@ -53,6 +69,8 @@ def parse_request_body(body_str):
             data[KEY_CLIENT_IP] = parts[2]
         if len(parts) >= 4:
             data[KEY_CLIENT_MAC] = parts[3]
+        if len(parts) >= 5:
+            data[KEY_BLACKLIST_DOMAIN] = parts[4] # [추가] 5번째 인자로 도메인이 들어올 경우
     return data
 
 def create_http_response(status_code, body_dict):
@@ -82,6 +100,7 @@ def run_server():
     print(f" - 로그아웃 경로   : POST /api/logout")
     print(f" - 도메인 동기화   : POST /api/sync_domains")
     print(f" - 활성 세션 조회  : GET  /api/active_sessions")
+    print(f" - 블랙리스트 로그 : POST /api/blacklist_log")
     print(f"=========================================================")
 
     while True:
@@ -108,12 +127,18 @@ def run_server():
             path = parts[1] if len(parts) > 1 else "/api/verify"
             parsed = parse_request_body(body_str)
 
+            # 파싱 데이터 준비
+            raw_name = parsed.get(KEY_EMP_NAME) or parsed.get('name')
+            raw_num = parsed.get(KEY_EMP_NUM) or parsed.get('employee_number')
+            user_online_ip = parsed.get(KEY_CLIENT_IP)
+            user_online_mac = parsed.get(KEY_CLIENT_MAC, "00:00:00:00:00:00")
+            blacklist_domain = parsed.get(KEY_BLACKLIST_DOMAIN) or parsed.get('domain')
+
             # ---------------------------------------------------------
             # 1. 도메인 동기화 처리 (/api/sync_domains)
             # ---------------------------------------------------------
             if path.startswith('/api/sync_domains'):
                 with connection.cursor() as cursor:
-                    # [수정] 최신 스키마 반영: blacklist_addr / blacklist_domain
                     cursor.execute("SELECT blacklist_domain FROM blacklist_addr WHERE deleted_at IS NULL")
                     active_domains = cursor.fetchall()
                 
@@ -139,19 +164,12 @@ def run_server():
             # ---------------------------------------------------------
             # 2. 내부망 로그아웃 처리 (/api/logout)
             # ---------------------------------------------------------
-            raw_name = parsed.get(KEY_EMP_NAME) or parsed.get('name')
-            raw_num = parsed.get(KEY_EMP_NUM) or parsed.get('employee_number')
-            user_online_ip = parsed.get(KEY_CLIENT_IP)
-            # [수정] 세미콜론(;) 오타를 콜론(:)으로 수정 및 변수명 통일
-            user_online_mac = parsed.get(KEY_CLIENT_MAC, "00:00:00:00:00:00") 
-
             if path.startswith('/api/logout'):
                 if not user_online_ip:
                     res = {"is_logout": False, "message": "IP 정보가 제공되지 않았습니다."}
                 else:
                     target_online_ip = int(user_online_ip)
                     
-                    # [수정] 통일된 변수명(user_online_mac)으로 IP + MAC 2중 검증 삭제 수행
                     if user_online_mac and user_online_mac != "00:00:00:00:00:00":
                         deleted_cnt, _ = OnlineList.objects.filter(online_ip=target_online_ip, online_mac_addr=user_online_mac).delete()
                     else:
@@ -188,7 +206,6 @@ def run_server():
                         existing_session = OnlineList.objects.filter(employee_id=emp_num).first()
                         
                         if existing_session:
-                            # 중복 접속 처리 (밀어내기)
                             kick_host_id = existing_session.online_ip
                             print(f"  [중복 접속 처리]: 사번 {emp_num} 기존 IP({kick_host_id}) 밀어내기 진행.")
                             
@@ -197,7 +214,6 @@ def run_server():
                             existing_session.login_time = now_time
                             existing_session.save()
                         else:
-                            # 최초 접속
                             OnlineList.objects.create(
                                 employee_id=emp_num, 
                                 online_ip=user_online_ip, 
@@ -205,7 +221,6 @@ def run_server():
                                 login_time=now_time
                             )
 
-                        # 로그 기록 공통 수행
                         with connection.cursor() as cursor:
                             cursor.execute(
                                 "INSERT INTO online_list_log (employee_id, online_ip, login_time, online_mac_addr) VALUES (%s, %s, %s, %s)",
@@ -252,6 +267,38 @@ def run_server():
                 except Exception as e:
                     print(f"  [초기 세션 조회 실패]: {e}")
                     client_sock.sendall(create_http_response(500, {"status": "error", "message": str(e)}))
+                continue
+
+            # ---------------------------------------------------------
+            # 5. [신규 추가] 블랙리스트 접근 시도 로그 저장 (/api/blacklist_log)
+            # ---------------------------------------------------------
+            if method == "POST" and path.startswith('/api/blacklist_log'):
+                emp_num = int(raw_num) if raw_num is not None else -1
+                target_domain = str(blacklist_domain).strip() if blacklist_domain else ""
+                
+                if emp_num != -1 and target_domain:
+                    now_time = datetime.now()
+                    try:
+                        with connection.cursor() as cursor:
+                            cursor.execute(
+                                "INSERT INTO blacklist_addr_access_log (employee_id, blacklist_domain, access_time) VALUES (%s, %s, %s)",
+                                [emp_num, target_domain, now_time]
+                            )
+                        print(f"  [블랙리스트 차단 로그]: 사번 {emp_num} -> '{target_domain}' 접근 시도 기록 완료")
+                        
+                        # [핵심] DB 저장 완료 후 웹 서버에 갱신 알림 트리거 전송
+                        trigger_blacklist_refresh()
+                        
+                        res = {"is_logged": True}
+                    except Exception as e:
+                        print(f"  [블랙리스트 차단 로그 실패]: DB 삽입 에러 - {e}")
+                        res = {"is_logged": False, "error": str(e)}
+                else:
+                    print("  [블랙리스트 차단 로그 실패]: 사번 또는 도메인 정보가 누락되었습니다.")
+                    res = {"is_logged": False, "error": "Missing employee_number or domain"}
+                
+                client_sock.sendall(create_http_response(200, res))
+                continue
 
         except Exception as e:
             print(f"[에러 발생]: {e}")
