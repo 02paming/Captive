@@ -22,12 +22,12 @@ HOST = '0.0.0.0'
 PORT = 8080
 
 # =========================================================
-# [설정] 연동 변수명 및 PCAP 서버 주소 (변경 완료)
+# [설정] 연동 변수명 및 PCAP 서버 주소
 # =========================================================
 KEY_EMP_NAME = 'emp_name'       # [___사원이름_변수명___]
 KEY_EMP_NUM = 'emp_number'      # [___사원번호_변수명___]
-KEY_CLIENT_IP = 'user_online_list'   # [___접속PC_IP_변수명___] (기존 user_online_ip -> user_online_list)
-KEY_CLIENT_MAC = 'user_mac_addr'  # [추가] 접속PC MAC 주소
+KEY_CLIENT_IP = 'user_online_ip'     # [___접속PC_IP_변수명___]
+KEY_CLIENT_MAC = 'user_online_mac'   # [___접속PC_MAC_변수명___]
 PCAP_SERVER_SYNC_URL = "http://192.168.3.243/api/update_domains"
 
 def parse_request_body(body_str):
@@ -52,7 +52,7 @@ def parse_request_body(body_str):
         if len(parts) >= 3:
             data[KEY_CLIENT_IP] = parts[2]
         if len(parts) >= 4:
-            data[KEY_CLIENT_MAC] = parts[3] # [추가] 4번째 인자로 MAC 주소가 들어올 경우
+            data[KEY_CLIENT_MAC] = parts[3]
     return data
 
 def create_http_response(status_code, body_dict):
@@ -81,6 +81,7 @@ def run_server():
     print(f" - 로그인/인증 경로: POST /api/verify")
     print(f" - 로그아웃 경로   : POST /api/logout")
     print(f" - 도메인 동기화   : POST /api/sync_domains")
+    print(f" - 활성 세션 조회  : GET  /api/active_sessions")
     print(f"=========================================================")
 
     while True:
@@ -102,6 +103,8 @@ def run_server():
             header_part, _, body_str = raw_data.partition('\r\n\r\n')
             request_line = header_part.splitlines()[0] if header_part else ""
             parts = request_line.split(' ')
+
+            method = parts[0] if len(parts) > 0 else "GET"
             path = parts[1] if len(parts) > 1 else "/api/verify"
             parsed = parse_request_body(body_str)
 
@@ -110,6 +113,7 @@ def run_server():
             # ---------------------------------------------------------
             if path.startswith('/api/sync_domains'):
                 with connection.cursor() as cursor:
+                    # [수정] 최신 스키마 반영: blacklist_addr / blacklist_domain
                     cursor.execute("SELECT blacklist_domain FROM blacklist_addr WHERE deleted_at IS NULL")
                     active_domains = cursor.fetchall()
                 
@@ -137,22 +141,23 @@ def run_server():
             # ---------------------------------------------------------
             raw_name = parsed.get(KEY_EMP_NAME) or parsed.get('name')
             raw_num = parsed.get(KEY_EMP_NUM) or parsed.get('employee_number')
-            user_online_list = parsed.get(KEY_CLIENT_IP)
-            user_mac_addr = parsed.get(KEY_CLIENT_MAC) # [추가] MAC 주소 파싱
+            user_online_ip = parsed.get(KEY_CLIENT_IP)
+            # [수정] 세미콜론(;) 오타를 콜론(:)으로 수정 및 변수명 통일
+            user_online_mac = parsed.get(KEY_CLIENT_MAC, "00:00:00:00:00:00") 
 
             if path.startswith('/api/logout'):
-                if not user_online_list:
+                if not user_online_ip:
                     res = {"is_logout": False, "message": "IP 정보가 제공되지 않았습니다."}
                 else:
-                    target_online_list = int(user_online_list)
+                    target_online_ip = int(user_online_ip)
                     
-                    # [수정] MAC 주소가 함께 전송되었을 경우 조건에 포함
-                    if user_mac_addr:
-                        deleted_cnt, _ = OnlineList.objects.filter(online_ip=target_online_list, online_mac_addr=user_mac_addr).delete()
+                    # [수정] 통일된 변수명(user_online_mac)으로 IP + MAC 2중 검증 삭제 수행
+                    if user_online_mac and user_online_mac != "00:00:00:00:00:00":
+                        deleted_cnt, _ = OnlineList.objects.filter(online_ip=target_online_ip, online_mac_addr=user_online_mac).delete()
                     else:
-                        deleted_cnt, _ = OnlineList.objects.filter(online_ip=target_online_list).delete()
+                        deleted_cnt, _ = OnlineList.objects.filter(online_ip=target_online_ip).delete()
                     
-                    print(f"[내부망 로그아웃/만료 완료]: IP({target_online_list}) 세션 제거됨 (삭제된 행: {deleted_cnt})")
+                    print(f"[내부망 로그아웃/만료 완료]: IP({target_online_ip}) 세션 제거됨 (삭제된 행: {deleted_cnt})")
                     res = {"is_logout": True, "deleted_count": deleted_cnt}
                     
                 client_sock.sendall(create_http_response(200, res))
@@ -161,20 +166,14 @@ def run_server():
             # ---------------------------------------------------------
             # 3. 내부망 로그인 검증 및 중복 차단 (/api/verify)
             # ---------------------------------------------------------
-            emp_name = str(raw_name).strip() if raw_name else ""
-            emp_num = int(raw_num) if raw_num is not None else -1
-            user_online_list = int(str(user_online_list).strip())
-            # [추가] MAC 주소가 없을 경우 기본값 할당
-            user_mac_addr = str(user_mac_addr).strip() if user_mac_addr else "UNKNOWN" 
+            if path.startswith("/api/verify"):
+                emp_name = str(raw_name).strip() if raw_name else ""
+                emp_num = int(raw_num) if raw_num is not None else -1
+                user_online_ip = int(str(user_online_ip).strip())
+                user_online_mac = str(user_online_mac).strip() if user_online_mac else "UNKNOWN" 
 
-            print(f"   [요청 정보]: 사번={emp_num}, 이름='{emp_name}', 접속IP='{user_online_list}', MAC='{user_mac_addr}'")
+                print(f"  [요청 정보]: 사번={emp_num}, 이름='{emp_name}', 접속IP='{user_online_ip}', 접속MAC='{user_online_mac}'")
 
-            is_already_online = OnlineList.objects.filter(employee_id=emp_num).exists()
-
-            if is_already_online:
-                print(f"   [중복 접속 차단]: 사번 {emp_num} ('{emp_name}') 사원은 이미 로그인 중입니다.")
-                result_data = {"is_valid": False}
-            else:
                 emp_exists = Employees.objects.filter(
                     employee_number=emp_num,
                     name=emp_name,
@@ -183,23 +182,76 @@ def run_server():
 
                 if emp_exists:
                     now_time = datetime.now()
+                    kick_host_id = None 
+
                     with transaction.atomic():
-                        # [수정] 생성 시 online_mac_addr 파라미터 추가
-                        OnlineList.objects.create(employee_id=emp_num, online_ip=user_online_list, login_time=now_time, online_mac_addr=user_mac_addr)
+                        existing_session = OnlineList.objects.filter(employee_id=emp_num).first()
+                        
+                        if existing_session:
+                            # 중복 접속 처리 (밀어내기)
+                            kick_host_id = existing_session.online_ip
+                            print(f"  [중복 접속 처리]: 사번 {emp_num} 기존 IP({kick_host_id}) 밀어내기 진행.")
+                            
+                            existing_session.online_ip = user_online_ip
+                            existing_session.online_mac_addr = user_online_mac
+                            existing_session.login_time = now_time
+                            existing_session.save()
+                        else:
+                            # 최초 접속
+                            OnlineList.objects.create(
+                                employee_id=emp_num, 
+                                online_ip=user_online_ip, 
+                                online_mac_addr=user_online_mac,
+                                login_time=now_time
+                            )
+
+                        # 로그 기록 공통 수행
                         with connection.cursor() as cursor:
-                            # [수정] INSERT 쿼리에 online_mac_addr 추가
                             cursor.execute(
                                 "INSERT INTO online_list_log (employee_id, online_ip, login_time, online_mac_addr) VALUES (%s, %s, %s, %s)",
-                                [emp_num, user_online_list, now_time, user_mac_addr]
+                                [emp_num, user_online_ip, now_time, user_online_mac]
                             )
-                    print(f"   [로그인 성공]: 사번 {emp_num} ('{emp_name}') 접속 및 로그 기록 완료")
-                    result_data = {"is_valid": True}
+
+                    print(f"  [로그인 성공]: 사번 {emp_num}('{emp_name}') 접속 및 로그 기록 완료")
                     
+                    result_data = {
+                        "is_valid": True,
+                        "kick_host_id": kick_host_id
+                    }
+
                 else:
-                    print(f"   [검증 실패]: 이름과 사번이 일치하는 현직 사원이 아닙니다.")
+                    print(f"  [검증 실패]: 이름과 사번이 일치하는 현직 사원이 아닙니다.")
                     result_data = {"is_valid": False}
 
-            client_sock.sendall(create_http_response(200, result_data))
+                client_sock.sendall(create_http_response(200, result_data))
+                continue
+
+            # ---------------------------------------------------------
+            # 4. 초기 동기화용 활성 세션 리스트 조회 (GET /api/active_sessions)
+            # ---------------------------------------------------------
+            if method == "GET" and path.startswith('/api/active_sessions'):
+                try:
+                    active_sessions = OnlineList.objects.all()
+                    
+                    session_list = []
+                    for session in active_sessions:
+                        login_timestamp = int(session.login_time.timestamp()) 
+                        
+                        session_list.append({
+                            "host_id": session.online_ip,      
+                            "mac": session.online_mac_addr,    
+                            "login_time": login_timestamp      
+                        })
+                    
+                    res = {
+                        "status": "success", 
+                        "count": len(session_list),
+                        "data": session_list
+                    }
+                    client_sock.sendall(create_http_response(200, res))
+                except Exception as e:
+                    print(f"  [초기 세션 조회 실패]: {e}")
+                    client_sock.sendall(create_http_response(500, {"status": "error", "message": str(e)}))
 
         except Exception as e:
             print(f"[에러 발생]: {e}")
