@@ -14,7 +14,7 @@ BaseDatabaseWrapper.check_database_version_supported = lambda self: None
 django.setup()
 
 from django.db import transaction, connection, close_old_connections
-from packet_test_app.models import Employees, OnlineIp
+from packet_test_app.models import Employees, OnlineList
 
 # 허용할 IP 목록
 ALLOWED_IPS = ['192.168.3.243', '127.0.0.1']
@@ -24,9 +24,10 @@ PORT = 8080
 # =========================================================
 # [설정] 연동 변수명 및 PCAP 서버 주소 (변경 완료)
 # =========================================================
-KEY_EMP_NAME = 'emp_name'       # [___사원이름_변수명___] (기존 name -> emp_name)
-KEY_EMP_NUM = 'emp_number'      # [___사원번호_변수명___] (기존 emp_id -> emp_number)
-KEY_CLIENT_IP = 'user_online_ip'     # [___접속PC_IP_변수명___]
+KEY_EMP_NAME = 'emp_name'       # [___사원이름_변수명___]
+KEY_EMP_NUM = 'emp_number'      # [___사원번호_변수명___]
+KEY_CLIENT_IP = 'user_online_list'   # [___접속PC_IP_변수명___] (기존 user_online_ip -> user_online_list)
+KEY_CLIENT_MAC = 'user_mac_addr'  # [추가] 접속PC MAC 주소
 PCAP_SERVER_SYNC_URL = "http://192.168.3.243/api/update_domains"
 
 def parse_request_body(body_str):
@@ -50,6 +51,8 @@ def parse_request_body(body_str):
             data[KEY_EMP_NAME] = parts[1]
         if len(parts) >= 3:
             data[KEY_CLIENT_IP] = parts[2]
+        if len(parts) >= 4:
+            data[KEY_CLIENT_MAC] = parts[3] # [추가] 4번째 인자로 MAC 주소가 들어올 경우
     return data
 
 def create_http_response(status_code, body_dict):
@@ -107,7 +110,7 @@ def run_server():
             # ---------------------------------------------------------
             if path.startswith('/api/sync_domains'):
                 with connection.cursor() as cursor:
-                    cursor.execute("SELECT no_access_domain FROM no_access_addr WHERE deleted_at IS NULL")
+                    cursor.execute("SELECT blacklist_domain FROM blacklist_addr WHERE deleted_at IS NULL")
                     active_domains = cursor.fetchall()
                 
                 domain_list = [{"domain": row[0]} for row in active_domains]
@@ -130,64 +133,48 @@ def run_server():
                 continue
 
             # ---------------------------------------------------------
-            # 2. 내부망  로그아웃 처리 (/api/logout)
+            # 2. 내부망 로그아웃 처리 (/api/logout)
             # ---------------------------------------------------------
             raw_name = parsed.get(KEY_EMP_NAME) or parsed.get('name')
             raw_num = parsed.get(KEY_EMP_NUM) or parsed.get('employee_number')
-            user_online_ip = parsed.get(KEY_CLIENT_IP)
+            user_online_list = parsed.get(KEY_CLIENT_IP)
+            user_mac_addr = parsed.get(KEY_CLIENT_MAC) # [추가] MAC 주소 파싱
 
             if path.startswith('/api/logout'):
-                #     target_emp_num = None
-                #     if raw_num is not None:
-                #         target_emp_num = int(raw_num)
-                #     elif raw_name:
-                #         # 이름으로 검색하여 사번 찾기
-                #         emp_obj = Employees.objects.filter(name=str(raw_name).strip()).first()
-                #         if emp_obj:
-                #             target_emp_num = emp_obj.employee_number
-
-                #     if target_emp_num is None:
-                #         res = {"is_logout": False, "message": "사원 정보가 없습니다."}
-                #     else:
-                #         deleted_cnt, _ = OnlineIp.objects.filter(online_ip=user_online_ip).delete()
-                #         print(f"   [내부망 로그아웃 완료]: 사번={target_emp_num} 세션 제거됨")
-                #         res = {"is_logout": True, "deleted_count": deleted_cnt}
-
-                if not user_online_ip:
+                if not user_online_list:
                     res = {"is_logout": False, "message": "IP 정보가 제공되지 않았습니다."}
                 else:
-                    # DB에서 해당 IP를 가진 행(세션) 즉시 삭제 //복구할이유없음으로 delete로 진행 합의
-
-                    # 만약 DB에 "192.168.1.50" 형태로 저장되어 있고, 
-                    # C 프로그램이 "50"만 보냈다면 endswith를 사용하여 매칭합니다. > db에 타겟ip 끝자리만 저장되어있음
-                    target_online_ip = int(user_online_ip)
+                    target_online_list = int(user_online_list)
                     
+                    # [수정] MAC 주소가 함께 전송되었을 경우 조건에 포함
+                    if user_mac_addr:
+                        deleted_cnt, _ = OnlineList.objects.filter(online_ip=target_online_list, online_mac_addr=user_mac_addr).delete()
+                    else:
+                        deleted_cnt, _ = OnlineList.objects.filter(online_ip=target_online_list).delete()
                     
-                    # C 프로그램이 보낸 끝자리(Host ID)만으로 삭제하는 경우:
-                    deleted_cnt, _ = OnlineIp.objects.filter(online_ip=target_online_ip).delete()
-                    
-                    print(f"[내부망 로그아웃/만료 완료]: IP({target_online_ip}) 세션 제거됨 (삭제된 행: {deleted_cnt})")
+                    print(f"[내부망 로그아웃/만료 완료]: IP({target_online_list}) 세션 제거됨 (삭제된 행: {deleted_cnt})")
                     res = {"is_logout": True, "deleted_count": deleted_cnt}
-
+                    
                 client_sock.sendall(create_http_response(200, res))
                 continue
 
             # ---------------------------------------------------------
-            # 3. 로그인 검증 및 중복 차단 (/api/verify)
+            # 3. 내부망 로그인 검증 및 중복 차단 (/api/verify)
             # ---------------------------------------------------------
             emp_name = str(raw_name).strip() if raw_name else ""
             emp_num = int(raw_num) if raw_num is not None else -1
-            user_online_ip = int(str(user_online_ip).strip())
+            user_online_list = int(str(user_online_list).strip())
+            # [추가] MAC 주소가 없을 경우 기본값 할당
+            user_mac_addr = str(user_mac_addr).strip() if user_mac_addr else "UNKNOWN" 
 
-            print(f"   [요청 정보]: 사번={emp_num}, 이름='{emp_name}', 접속IP='{user_online_ip}'")
+            print(f"   [요청 정보]: 사번={emp_num}, 이름='{emp_name}', 접속IP='{user_online_list}', MAC='{user_mac_addr}'")
 
-            is_already_online = OnlineIp.objects.filter(employee_id=emp_num).exists()
+            is_already_online = OnlineList.objects.filter(employee_id=emp_num).exists()
 
             if is_already_online:
                 print(f"   [중복 접속 차단]: 사번 {emp_num} ('{emp_name}') 사원은 이미 로그인 중입니다.")
                 result_data = {"is_valid": False}
             else:
-                # [핵심 변경 사항] employee_id 대신 사원 이름(name) 필드로 검사
                 emp_exists = Employees.objects.filter(
                     employee_number=emp_num,
                     name=emp_name,
@@ -197,14 +184,17 @@ def run_server():
                 if emp_exists:
                     now_time = datetime.now()
                     with transaction.atomic():
-                        OnlineIp.objects.create(employee_id=emp_num, online_ip=user_online_ip, login_time=now_time)
+                        # [수정] 생성 시 online_mac_addr 파라미터 추가
+                        OnlineList.objects.create(employee_id=emp_num, online_ip=user_online_list, login_time=now_time, online_mac_addr=user_mac_addr)
                         with connection.cursor() as cursor:
+                            # [수정] INSERT 쿼리에 online_mac_addr 추가
                             cursor.execute(
-                                "INSERT INTO online_ip_log (employee_id, online_ip, login_time) VALUES (%s, %s, %s)",
-                                [emp_num, user_online_ip, now_time]
+                                "INSERT INTO online_list_log (employee_id, online_ip, login_time, online_mac_addr) VALUES (%s, %s, %s, %s)",
+                                [emp_num, user_online_list, now_time, user_mac_addr]
                             )
                     print(f"   [로그인 성공]: 사번 {emp_num} ('{emp_name}') 접속 및 로그 기록 완료")
                     result_data = {"is_valid": True}
+                    
                 else:
                     print(f"   [검증 실패]: 이름과 사번이 일치하는 현직 사원이 아닙니다.")
                     result_data = {"is_valid": False}

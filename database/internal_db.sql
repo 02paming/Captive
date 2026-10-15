@@ -30,12 +30,12 @@ CREATE TABLE `employees` (
 
 -- 3. 접근 금지 사이트 테이블
 CREATE TABLE `no_access_addr` (
-    `no_access_domain` VARCHAR(255) NOT NULL COMMENT '접근 금지 사이트 주소, 하나의 ip에 여러 개의 DNS 주소가 있을 수 있음',
+    `no_access_domain` VARCHAR(255) NOT NULL COMMENT '접근 금지 사이트 도메인',
     `deleted_at` DATE DEFAULT NULL COMMENT '접근 금지 사이트 임시 삭제 일자(5년 보관 후 자동 삭제)',
     PRIMARY KEY (`no_access_domain`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 4. 접근 금지 사이트 로그 테이블
+-- 4. 접근 금지 사이트 접근 로그 테이블
 CREATE TABLE `no_access_addr_log` (
     `employee_id` INT NOT NULL COMMENT '사원번호, employees 테이블의 employee_id 참조',
     `no_access_domain` VARCHAR(255) NOT NULL COMMENT '접근 금지 사이트 도메인, no_access_addr 테이블의 no_access_domain 참조',
@@ -52,6 +52,7 @@ CREATE TABLE `online_ip_log` (
     FOREIGN KEY (`employee_id`) REFERENCES `employees`(`employee_number`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 6. 내부망에서 접속중인 사원 테이블
 CREATE TABLE IF NOT EXISTS `online_ip` (
     `employee_id` INT NOT NULL COMMENT '사원 번호, employees 테이블의 employee_number 참조',
     `online_ip` CHAR(15) NOT NULL COMMENT '접속 중인 PC',
@@ -62,24 +63,38 @@ CREATE TABLE IF NOT EXISTS `online_ip` (
         ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 7. 화이트 리스트 사이트 테이블
+CREATE TABLE `whitelist_addr` (
+    `whitelist_domain` VARCHAR(255) NOT NULL COMMENT '화이트 리스트 사이트 도메인',
+    `deleted_at` DATE DEFAULT NULL COMMENT '화이트 리스트 사이트 임시 삭제 일자(5년 보관 후 자동 삭제)',
+    PRIMARY KEY (`whitelist_domain`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- 만들어진 테이블에 필드 추가
 
--- 6. 가입 요청자 테이블에 '이름(name)' 컬럼 추가
--- 이메일(email) 컬럼 앞에 추가합니다.
+-- 1. 가입 요청자 테이블에 '이름(name)' 컬럼 추가
+-- 이메일(email) 컬럼 앞에 추가
 ALTER TABLE `prospective_members`
 ADD COLUMN `name` VARCHAR(50) NOT NULL COMMENT '가입 희망자 이름' AFTER `date_of_request`;
 
--- 7. 사원 테이블에 '이름(name)' 컬럼 추가
--- 입사일(hire_date) 컬럼 뒤에 추가합니다.
+-- 2. 사원 테이블에 '이름(name)' 컬럼 추가
+-- 입사일(hire_date) 컬럼 뒤에 추가
 ALTER TABLE `employees`
 ADD COLUMN `name` VARCHAR(50) NOT NULL COMMENT '사원 이름' AFTER `hire_date`;
 
--- 8. 사원 테이블에 '비밀번호(password)' 컬럼 추가
--- 사원 아이디(employee_id) 컬럼 뒤에 추가합니다.
+-- 3. 사원 테이블에 '비밀번호(password)' 컬럼 추가
+-- 사원 아이디(employee_id) 컬럼 뒤에 추가
 ALTER TABLE `employees`
 ADD COLUMN `password` VARCHAR(255) NOT NULL COMMENT '사원 비밀번호' AFTER `employee_id`;
 
+-- 4. 접속중인 pc 테이블에 '맥주소(online_mac_addr)' 컬럼 추가
+ALTER TABLE online_list 
+ADD COLUMN online_mac_addr VARCHAR(17) NOT NULL COMMENT '내부망에서 접속 중인 PC 맥주소';
+
+-- 5. 접속한 pc 로그 테이블에 '맥주소(online_mac_addr)' 컬럼 추가
+ALTER TABLE online_list_log
+ADD COLUMN online_mac_addr VARCHAR(17) NOT NULL COMMENT '내부망에서 접속 중인 PC 맥주소';
 
 -- 테스트용 임시 직원 계정(관리자) 추가
 
@@ -125,11 +140,25 @@ STARTS CURRENT_TIMESTAMP
 COMMENT '가입희망자(1개월) 및 임시삭제/로그 데이터(5년) 매일 자동 영구 삭제'
 DO
 BEGIN
-    DELETE FROM internal_db.prospective_members WHERE date_of_request <= DATE_SUB(CURDATE(), INTERVAL 1 MONTH);
-    DELETE FROM internal_db.no_access_addr_log WHERE access_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
-    DELETE FROM internal_db.online_ip_log WHERE login_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
-    DELETE FROM internal_db.employees WHERE deleted_at IS NOT NULL AND deleted_at <= DATE_SUB(CURDATE(), INTERVAL 5 YEAR);
-    DELETE FROM internal_db.no_access_addr WHERE deleted_at IS NOT NULL AND deleted_at <= DATE_SUB(CURDATE(), INTERVAL 5 YEAR);
+    -- 1. 가입 요청자: 1달 경과 시 삭제 (변경 없음)
+    DELETE FROM prospective_members 
+    WHERE date_of_request <= DATE_SUB(NOW(), INTERVAL 1 MONTH);
+
+    -- 2. 블랙리스트 임시 삭제 도메인: 5년 경과 시 영구 삭제 (테이블명 변경)
+    DELETE FROM blacklist_addr 
+    WHERE deleted_at <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    -- 3. 화이트리스트 임시 삭제 도메인: 5년 경과 시 영구 삭제 (신규 추가)
+    DELETE FROM whitelist_addr 
+    WHERE deleted_at <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    -- 4. 블랙리스트 접근 로그: 5년 경과 시 삭제 (테이블명 변경)
+    DELETE FROM blacklist_addr_access_log 
+    WHERE access_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    -- 5. 온라인 접속 로그: 5년 경과 시 삭제 (테이블명 변경)
+    DELETE FROM online_list_log 
+    WHERE login_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
 END
 
 
@@ -204,3 +233,19 @@ ALTER TABLE online_ip_log MODIFY COLUMN online_ip INT NOT NULL;
 -- 4. 변경 결과 확인 (Type이 int(11)로 나오면 성공!)
 DESC online_ip;
 DESC online_ip_log;
+
+-- 테이블명, 컬럼명 변경
+-- 1. 기존 테이블 이름 변경
+RENAME TABLE no_access_addr TO blacklist_addr;
+RENAME TABLE no_access_addr_log TO blacklist_addr_access_log;
+RENAME TABLE online_ip TO online_list;
+RENAME TABLE online_ip_log TO online_list_log;
+
+-- 2. 컬럼명 변경 (no_access_domain -> blacklist_domain)
+-- 기존 데이터 타입(VARCHAR)을 유지하면서 이름만 변경합니다.
+ALTER TABLE blacklist_addr 
+CHANGE no_access_domain blacklist_domain VARCHAR(255) NOT NULL;
+
+ALTER TABLE blacklist_addr_access_log 
+CHANGE no_access_domain blacklist_domain VARCHAR(255) NOT NULL;
+
