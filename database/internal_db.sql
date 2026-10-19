@@ -249,3 +249,34 @@ CHANGE no_access_domain blacklist_domain VARCHAR(255) NOT NULL;
 ALTER TABLE blacklist_addr_access_log 
 CHANGE no_access_domain blacklist_domain VARCHAR(255) NOT NULL;
 
+
+-- 261019
+-- web_access_log테이블 추가 및 online_list_log테이블에 id 필드 추가
+SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS `web_access_log`;
+DROP TABLE IF EXISTS `online_list_log`;
+SET FOREIGN_KEY_CHECKS = 1;
+
+
+-- 1. 온라인 IP 로그 테이블
+CREATE TABLE `online_list_log` (
+    `online_list_log_id` INT NOT NULL AUTO_INCREMENT COMMENT '온라인 로그 id',
+    `employee_id` INT NOT NULL COMMENT '사원 번호, employees 테이블 참조',
+    `online_ip` INT NOT NULL COMMENT '내부망 접속 PC IP 뒷번호',
+    `login_time` DATETIME NOT NULL COMMENT '접속한 시간(5년 보관 후 자동 삭제)',
+    `online_mac_addr` VARCHAR(17) NOT NULL COMMENT '내부망 접속 PC 맥주소',
+    PRIMARY KEY (`online_list_log_id`),
+    FOREIGN KEY (`employee_id`) REFERENCES `employees`(`employee_number`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 2. [신규] 웹 접근 로그 테이블 (`access_time`은 데이터 추가된 시간)
+CREATE TABLE `web_access_log` (
+    `web_access_log_id` INT NOT NULL AUTO_INCREMENT COMMENT '웹 접근 로그 id',
+    `online_list_log_id` INT NOT NULL COMMENT 'online_list_log 테이블 참조',
+    `target_url` VARCHAR(255) NOT NULL COMMENT '접근한 모든 도메인/URL',
+    `access_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '접근 시간(데이터 추가된 시간, 5년 보관 후 자동 삭제)',
+    PRIMARY KEY (`web_access_log_id`),
+    FOREIGN KEY (`online_list_log_id`) REFERENCES `online_list_log`(`online_list_log_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
