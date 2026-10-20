@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>접속 차단 안내</title>
+    <style>
+        body {
+            font-family: 'Malgun Gothic', sans-serif;
+            background-color: #1e1e1e;
+            color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #2c2c2c;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+            border-top: 5px solid #ff4c4c;
+        }
+        .icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #ff4c4c;
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        p {
+            color: #ccc;
+            font-size: 16px;
+            line-height: 1.5;
+            margin-bottom: 20px;
+        }
+        .info-box {
+            background-color: #3a3a3a;
+            border: 1px solid #555;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: left;
+            margin-bottom: 20px;
+        }
+        .info-box p {
+            margin: 8px 0;
+            font-size: 14px;
+            color: #eee;
+        }
+        .highlight {
+            color: #ff4c4c;
+            font-weight: bold;
+        }
+        .footer {
+            font-size: 12px;
+            color: #777;
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="icon">🚫</div>
+        <h1>접속이 차단되었습니다.</h1>
+        <p>네트워크 보안 정책 위반으로 인해 해당 웹사이트로의 접근이 제한(Ban)되었습니다.</p>
+
+        <div class="info-box">
+            <p><strong>차단 사유:</strong> <span id="block-reason" class="highlight">확인 중...</span></p>
+        </div>
+
+        <p>본 차단 조치에 대한 문의 사항은 네트워크 보안 관리자에게 연락하시기 바랍니다.</p>
+
+        <div class="footer">
+            &copy; 2026 Network Security Control
+        </div>
+    </div>
+
+    <script>
+        // URL 파라미터에서 데이터 추출 (예: ?ip=192.168.0.1&url=example.com&reason=비정상적인 패킷 감지)
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        const blockReason = urlParams.get('reason') || '보안 정책 위반 (사유 미지정)';
+
+        document.getElementById('block-reason').innerText = blockReason;
+    </script>
+
+</body>
+</html>

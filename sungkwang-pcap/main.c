@@ -16,6 +16,8 @@ pcap_t* handle = NULL; //추후에 그냥 여기쓸거 구조체변수를 전역
 //지금 devices[0].handle를 시그널함수에 가져다 못쓰기때문에(main함수에서 구조체변수로만들어진놈이라 stack영역으로 지역변수임)
 uint8_t latest_mac_cache[256][6] = {0};
 BlackListInfo check_manager;
+LogPacket log_date = {0};
+SharedLogQueue log_queue = {0};
 
 void handle_sigint(int sig) {
     printf("\n[Main] 종료 신호 감지! 스레드들을 깨웁니다...\n");

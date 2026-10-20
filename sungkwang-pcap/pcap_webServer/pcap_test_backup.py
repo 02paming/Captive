@@ -22,6 +22,12 @@ API_AUTH_IP_DELETE = "http://192.168.3.23:8080/api/logout"
 #추가 초기동기화 api
 API_INITIAL_SYNC = "http://192.168.3.23:8080/api/active_sessions"
 
+#추가 위협탐지로그
+API_BLACKLIST_LOG = "http://192.168.3.23:8080/api/blacklist_log"
+
+#추가 인증된사원 웹접속로그
+API_WEB_ACCESS_LOG = "http://192.168.3.23:8080/api/web_access_log"
+
 @app.after_request
 def add_header(response):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -31,8 +37,29 @@ def add_header(response):
 def index():
     return render_template("index.html")
 
+@app.route("/ban",methods=["GET"])
+def ban_site():
+    return render_template("ban_page.html")
+
 @app.route("/blocked", methods=["GET"])
 def blocked_site():
+
+    # print(" [디버깅] 들어온 args 전체:", dict(request.args))
+    blocked_url = request.args.get("url") #get이 객체의 키값꺼내는것 아래에도 자주쓰였음 지금은 쿼리스트링 키값가져옴 args에서
+    client_ip = request.args.get("ip")
+    host_id = client_ip.split(".")[-1]
+
+    if blocked_url and client_ip:
+        payload = {
+            "blacklist_domain": blocked_url,
+            "user_online_ip": host_id
+        }
+        try:
+            res = requests.post(API_BLACKLIST_LOG, json=payload, timeout=2)
+            print(f" PCAP 백엔드로 전달 성공 (상태코드: {res.status_code})")
+        except Exception as e:
+            print(f" PCAP 백엔드 통신 실패: {e}")
+
     return render_template("blocked_page.html")
 
 @app.route("/auth", methods=["POST"])
@@ -141,29 +168,54 @@ def update_domains():
             
     print(f"\n[PCAP 로그] 총 {len(domains)}개의 금지 도메인을 blacklist.txt 에 갱신했습니다.")
     
-    # 2. [추가된 부분] C 프로그램에게 UDS로 RELOAD 신호 쏘기!
-    send_reload_signal_via_uds()
+    # 2.  C 프로그램에게 UDS로 RELOAD 신호 쏘기! // 함수 재활용 payload는 없음으로 "0"
+    try:
+        send_host_id_via_uds("RELOAD","0")
+        print("[PCAP 로그] C 프로그램으로 RELOAD 신호를 전송했습니다.")
+    except Exception as e:
+        print(f"[PCAP 에러] RELOAD 신호 전송 실패: {e}")
     
     return jsonify({"status": "success", "count": len(domains)}), 200
 
+#신규추가! 웹서버 백엔드가 pcap백엔드로 쏘고 거기서 멍텅구리백엔드(여기)로 쏘면서 관리자가 지정한 ip(혹은id) 차단하는곳
+@app.route('/api/update_online', methods=['POST'])
+def update_online():
+    # 1. pcap백엔드가 던진 JSON 받기
+    data = request.json
+    kick_host_id = data.get("kick_host_id")
+    
+    if kick_host_id is not None:
+        try:
+            # 2. 기존에 만들어둔 UDS 통신 함수로 바로 삭제하러감
+            send_host_id_via_uds("EXPIRE", kick_host_id)
+            print(f"[PCAP 로그] 웹 관리자 명령으로 '{kick_host_id}' UDS(EXPIRE) 전송 완료.")
+            
+            # 3. 8080 징검다리에게 잘 받았다고 대답
+            return jsonify({"is_sync_success": True}), 200
+            
+        except Exception as e:
+            print(f"[PCAP 에러] UDS 전송 실패: {e}")
+            return jsonify({"is_sync_success": False, "error": str(e)}), 500
+            
+    return jsonify({"is_sync_success": False, "error": "kick_host_id 누락"}), 400
 
-# [추가된 부분] UDS로 RELOAD 문자열을 전송하는 함수
-def send_reload_signal_via_uds():
-    client_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        # 기존 사원 인증 IP를 넘겨주던 소켓 경로와 동일한 곳으로 연결
-        client_socket.connect(SOCKET_PATH) 
-        
-        # IP 주소 대신 "RELOAD" 라는 문자열을 전송!
-        message = "RELOAD\n"
-        client_socket.sendall(message.encode("utf-8"))
-        print("[PCAP 로그] C 프로그램으로 RELOAD 신호를 전송했습니다.")
-        
-    except socket.error as e:
-        print(f"[PCAP 에러] UDS Socket 연결 실패: {e}")
-    finally:
-        client_socket.close()
 
+#기존 함수로 대체!
+# def send_reload_signal_via_uds():
+#     client_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+#     try:
+#         # 기존 사원 인증 IP를 넘겨주던 소켓 경로와 동일한 곳으로 연결
+#         client_socket.connect(SOCKET_PATH) 
+        
+#         # IP 주소 대신 "RELOAD" 라는 문자열을 전송!
+#         message = "RELOAD\n"
+#         client_socket.sendall(message.encode("utf-8"))
+#         print("[PCAP 로그] C 프로그램으로 RELOAD 신호를 전송했습니다.")
+        
+#     except socket.error as e:
+#         print(f"[PCAP 에러] UDS Socket 연결 실패: {e}")
+#     finally:
+#         client_socket.close()
 
 
 # 추가 인증초기화 usd 서버 역할의 함수 (백엔드로쏴서 인증테이블 db 행 삭제용(혹은 status 업데이트로갈건지 추후 상의))
@@ -185,25 +237,47 @@ def gc_uds_server():
         data = conn.recv(1024).decode('utf-8').strip()
         
         if data:
-            user_online_ip = data #인증ip 
-            print(f"[UDS 수신] C 프로그램 -> Host ID {user_online_ip} 차단 통보")
-            
-            # DB 쿼리 없이, 순수하게 백엔드 서버로 JSON 데이터만 쏴줍니다.
-            try:
-                # POST 방식
-                response = requests.post(
-                    API_AUTH_IP_DELETE, 
-                    json={"user_online_ip": user_online_ip}, 
-                    timeout=3 # 3초 안에 응답 안 오면 끊음 (C 프로그램엔 영향 없음)
-                )
-                print(f"[API 전달 완료] 백엔드 응답 코드: {response.status_code}")
-                res = response.json()
-                # 실패시
-                if res.get("is_login") == False:
-                    print(res.get("message"))
+            parts = data.split('|')
+            command = parts[0]
 
-            except Exception as e:
-                print(f"[API 전달 실패] 백엔드 서버 연결 오류: {e}")
+            #c 수신 uds처럼 커멘드로 분기하는 로직
+            #GC일떄(인증초기화)
+            #["GC", "55"]
+            if command == "GC" and len(parts) >= 2:
+                user_online_ip = parts[1]
+                print(f"[UDS 수신] GC 차단 통보 -> Host IP {user_online_ip}")
+                try:
+                    response = requests.post(
+                        API_AUTH_IP_DELETE,
+                        json={"user_online_ip": user_online_ip},
+                        timeout=3
+                    )
+                    print(f"[API 전달 완료] 백엔드 응답 코드: {response.status_code}")
+                except Exception as e:
+                    print(f"[API 전달 실패] 백엔드 서버 연결 오류: {e}")
+
+            #일반 log일때(인증된사원 일반접속로그)
+            #["LOG",55,"ccc.com"]
+            elif command == "LOG" and len(parts) >= 3:
+
+                client_ip = parts[1] #지금 여기서 parts[1]은 ip 풀 192.168.2.55 상태일거임 이걸 55로보내야함
+                target_url = parts[2]
+                
+                data = {
+                    "client_ip" : client_ip.split(".")[-1], 
+                    #  "client_mac" : client_mac, 맥은 안보내고 ip로만 제어가능 db에서 조인으로 써먹을수있음
+                    "target_url" : target_url
+                }
+                print(data)
+                print(f"[UDS 수신] 웹 접속 로그 -> {client_ip} ({target_url})")
+                try:
+                    response = requests.post(
+                        API_WEB_ACCESS_LOG, 
+                        json=data,
+                        timeout=3
+                    )
+                except Exception as e:
+                    print(f"[API 전달 실패] 로그 저장 오류: {e}")
                 
         conn.close()
 
@@ -234,15 +308,18 @@ def run_initial_sync():
                     expire_timestamp = login_timestamp + 600
                     
                     # C 프로그램에 RESTORE 명령어로 IP, MAC, 만료시간 일괄 전송
-                    if mac and mac != "00:00:00:00:00:00":
-                        payload = f"{host_id} {mac} {expire_timestamp}"
-                        send_host_id_via_uds("RESTORE",payload)
-                        success_count += 1
-                        cur_time = int(time.time()) #이 함수가 실행될때 즉 초기동기화할때의 시간
-                        real_time = expire_timestamp - cur_time #만료시간
-                        if real_time < 0:
-                            real_time = 0 #다 만료되고 동기화하면 만료시간 0으로뜨게하기 음수보기싫으니
-                        print(f" -> [복구 전송] IP: 2.{host_id} / MAC: {mac} / 만료시간: {real_time}")
+                    try:
+                        if mac and mac != "00:00:00:00:00:00":
+                            payload = f"{host_id} {mac} {expire_timestamp}"
+                            send_host_id_via_uds("RESTORE",payload)
+                            success_count += 1
+                            cur_time = int(time.time()) #이 함수가 실행될때 즉 초기동기화할때의 시간
+                            real_time = expire_timestamp - cur_time #만료시간
+                            if real_time < 0:
+                                real_time = 0 #다 만료되고 동기화하면 만료시간 0으로뜨게하기 음수보기싫으니
+                            print(f" -> [복구 전송] IP: 2.{host_id} / MAC: {mac} / 만료시간: {real_time}")
+                    except Exception as e:
+                        print(f"run_initial_sync() 중 에러발생!! (메인pcap서버 안켜서 uds에러일확률 큼!) {e}")
                 print(f"=== [초기 동기화 완료] 총 {success_count}대 복구 ===")
             else:
                 print(f"백엔드 응답오류 : success가 아니라는뜻!")

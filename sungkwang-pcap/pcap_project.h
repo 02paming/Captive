@@ -23,6 +23,7 @@
 #include <stdbool.h>
 
 #define MAX_BLACKLIST_COUNT 128
+#define MAX_LOG_QUEUE 1024
 
 #define SOCKET_PATH "/tmp/authrized_ip"
 #define GC_SOCKET_PATH  "/tmp/pcap_gc.sock"
@@ -31,7 +32,7 @@ typedef struct {
   char *target_url[MAX_BLACKLIST_COUNT];
   u_int count;
   pthread_mutex_t lock;
-} BlackListInfo;
+} BlackListInfo; //블랙리스트 정보
 
 typedef struct {
     int is_active;           // 1: 인증됨, 0: 차단
@@ -41,6 +42,19 @@ typedef struct {
     int is_mac_bound;        // MAC 바인딩 여부 (1: 바인딩됨)
 } AuthRecord; //인증레코드
 
+typedef struct {
+    char client_ip[16];
+    char target_host[128]; 
+} LogPacket; //인증된사원 일반접속로그
+
+typedef struct{
+    LogPacket nodes[MAX_LOG_QUEUE]; // 원형 큐 배열
+    int front; // 파이썬으로 보낼 차례인 인덱스
+    int rear;  // 새로 들어올 패킷을 넣을 인덱스
+    int count; // 현재 큐에 쌓인 패킷 개수
+    pthread_mutex_t queue_lock; // 로그 전송 전용 자물쇠
+}SharedLogQueue; //일반접속로그 전용 큐 구조체
+
 extern AuthRecord whitelist[256];
 extern pthread_mutex_t lock;
 extern pthread_cond_t cond;
@@ -49,6 +63,8 @@ extern int server_fd;
 extern pcap_t *handle;
 extern uint8_t latest_mac_cache[256][6];
 extern BlackListInfo check_manager;
+extern LogPacket log_date;
+extern SharedLogQueue log_queue;
 
 // TCP Checksum 계산을 위한 가상 헤더 구조체
 typedef struct {
@@ -65,6 +81,7 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header,
 unsigned short csum(unsigned short *ptr, int nbytes);
 
 void uds_client_sock(const int ip);
+void uds_client_sock_log(const LogPacket* local_log);
 
 int packet_mac_check(const int host_id, const uint8_t* packet_mac);
 

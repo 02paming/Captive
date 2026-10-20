@@ -40,15 +40,46 @@ void uds_client_sock(const int ip){
     // 파이썬 서버로 연결 시도 (안 켜져 있으면 에러 반환하고 무시함)
     if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
         char msg[32];
-        sprintf(msg, "%d\n", ip); // 예: "50\n"
+        sprintf(msg, "GC|%d", ip); // 예: "50"
         
         // 차단된 Host ID 전송 후 즉시 연결 종료
-        write(sockfd, msg, strlen(msg)); //순수 50크기만 쏨 \n제외
+        write(sockfd, msg, strlen(msg)); //순수 50크기만 쏨 널제외
         // printf("잘 날아갔나? 2\n");
     }else{
         perror("[UDS 클라이언트 에러] 파이썬 GC 소켓 연결 실패");
     }
 
+    close(sockfd); // 클라이언트 소켓은 다 쓰면 닫아버림
+
+    return;
+}
+
+void uds_client_sock_log(const LogPacket* local_log){
+
+    int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (sockfd < 0) {
+            perror("UDS 소켓 생성 실패");
+            return;
+        }
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, GC_SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
+    // printf("잘 날아갔나? 1\n");
+    // 파이썬 서버로 연결 시도 (안 켜져 있으면 에러 반환하고 무시함)
+    if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == 0){
+        char msg[256]; // URL이 길 수 있으므로 256 넉넉하게 잡음
+        
+        // 파이썬 웹서버가 파싱할 수 있게 "LOG|IP|MAC|URL" 형태로 묶기
+        sprintf(msg, "LOG|%s|%s", local_log->client_ip, local_log->target_host);
+
+        // 조합된 문자열 한 번에 전송
+        write(sockfd, msg, strlen(msg));
+    } else {
+        perror("[UDS 에러] 웹 로그 파이썬 소켓 연결 실패");
+    }
     close(sockfd); // 클라이언트 소켓은 다 쓰면 닫아버림
 
     return;
@@ -73,9 +104,9 @@ int packet_mac_check(const int host_id, const uint8_t* packet_mac){
             // 2. 두 번째 패킷부터: 기존 MAC과 들어온 MAC 비교 검증
             else {
                 if (memcmp(packet_mac, whitelist[host_id].mac_addr, ETH_ALEN) != 0) {
-                    // MAC이 다르면 IP 위조로 간주하고 즉시 인증 해제
+                    // MAC이 다르면 IP 위조로 간주하고 다른곳으로 리다이렉팅시켜야함  (분기문에서 제어) 인증여부를 2로줌
                     printf("인증한계정의 MAC과 일치하지않습니다.\n");
-                    whitelist[host_id].is_active = 0;
+                    return  2;
                 }
             }
 

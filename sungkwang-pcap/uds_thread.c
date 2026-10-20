@@ -118,7 +118,7 @@ void* uds_server_thread(void* arg) {
                             whitelist[host_id].last_seen = 0;
                             whitelist[host_id].expire_time = 0;
                             
-                            printf("[UDS 스레드] Host ID %d 중복 로그인으로 강제 퇴출.\n", host_id);
+                            printf("[UDS 스레드] Host ID %d 중복 로그인으로 강제 퇴출 혹은 관리자에의한 강제 인증해제.\n", host_id);
                         }
 
                         // 3. 서버 재시작시 초기동기화 (RESTORE) 처리
