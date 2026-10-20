@@ -280,3 +280,176 @@ CREATE TABLE `web_access_log` (
     FOREIGN KEY (`online_list_log_id`) REFERENCES `online_list_log`(`online_list_log_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+
+-- 261020
+-- DB 테이블 구축 변경
+
+USE internal_db;
+
+-- =========================================================
+-- 1. employees를 제외한 나머지 테이블 및 로그 삭제
+-- =========================================================
+SET FOREIGN_KEY_CHECKS = 0;
+
+DROP TABLE IF EXISTS `online_ip_mac_mismatch_log`;
+DROP TABLE IF EXISTS `blacklist_addr_access_log`;
+DROP TABLE IF EXISTS `web_access_log`;
+DROP TABLE IF EXISTS `online_list`;
+DROP TABLE IF EXISTS `online_list_log`;
+DROP TABLE IF EXISTS `blacklist_addr`;
+DROP TABLE IF EXISTS `whitelist_addr`;
+DROP TABLE IF EXISTS `prospective_members`;
+-- (주의: employees 테이블은 보존합니다.)
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+
+-- =========================================================
+-- 2. employees 테이블 구조 변경 (otp_secret 필드 추가)
+-- =========================================================
+-- 이미 존재할 경우를 대비하여 안전하게 컬럼 추가 (없을 때만 추가되도록 하거나 ALTER 실행)
+-- 참고: 만약 이미 otp_secret이 있다면 에러가 날 수 있으므로 체크 후 실행됩니다.
+SET @dbname = DATABASE();
+SET @tablename = "employees";
+SET @columnname = "otp_secret";
+SET @preparedStatement = (SELECT IF(
+  (
+    SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = @dbname
+      AND TABLE_NAME = @tablename
+      AND COLUMN_NAME = @columnname
+  ) > 0,
+  "SELECT 'Column already exists.'",
+  "ALTER TABLE employees ADD COLUMN otp_secret VARCHAR(128) DEFAULT NULL COMMENT '구글 OTP 2차 인증용 시크릿 키';"
+));
+PREPARE alterIfNotExists FROM @preparedStatement;
+EXECUTE alterIfNotExists;
+DEALLOCATE PREPARE alterIfNotExists;
+
+
+-- =========================================================
+-- 3. 최신 엑셀 스키마 기반 나머지 테이블 재생성
+-- =========================================================
+
+-- 1. 가입 요청자 테이블
+CREATE TABLE `prospective_members` (
+    `members_table_id` INT NOT NULL AUTO_INCREMENT COMMENT '테이블 id',
+    `member_id` VARCHAR(50) NOT NULL UNIQUE COMMENT '가입 요청 아이디',
+    `password` VARCHAR(255) NOT NULL COMMENT '가입 요청 비밀번호',
+    `name` VARCHAR(255) NOT NULL COMMENT '가입 희망자 이름',
+    `date_of_request` DATE NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '가입 요청 일자(한달 후 자동 삭제)',
+    `email` VARCHAR(255) NOT NULL UNIQUE COMMENT '이메일',
+    `address` VARCHAR(255) NOT NULL COMMENT '실제 주소',
+    `phone_number` CHAR(11) NOT NULL UNIQUE COMMENT '휴대 전화 번호',
+    `jumin_no` CHAR(13) NOT NULL UNIQUE COMMENT '주민 번호',
+    PRIMARY KEY (`members_table_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2. 화이트리스트 사이트 테이블
+CREATE TABLE `whitelist_addr` (
+    `whitelist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `whitelist_domain` VARCHAR(255) NOT NULL UNIQUE COMMENT '화이트 리스트 사이트 도메인',
+    `deleted_at` DATE DEFAULT NULL COMMENT '화이트 리스트 사이트 임시 삭제 일자(5년 보관 후 자동 삭제)',
+    PRIMARY KEY (`whitelist_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 3. 블랙리스트 사이트 테이블
+CREATE TABLE `blacklist_addr` (
+    `blacklist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `blacklist_domain` VARCHAR(255) NOT NULL UNIQUE COMMENT '접근 금지(블랙 리스트) 사이트 도메인',
+    `deleted_at` DATE DEFAULT NULL COMMENT '접근 금지 사이트 임시 삭제 일자(5년 보관 후 자동 삭제)',
+    PRIMARY KEY (`blacklist_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 4. 온라인 IP 로그 테이블 (모든 접속 로그의 뿌리)
+CREATE TABLE `online_list_log` (
+    `online_list_log_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `employee_id` INT NOT NULL COMMENT '사원 번호, employees 테이블 참조',
+    `online_ip` INT NOT NULL COMMENT '내부망에서 접속 중인 PC ip 뒷번호',
+    `login_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '접속한 시간(5년 보관 후 자동 삭제)',
+    `online_mac_addr` VARCHAR(17) NOT NULL COMMENT '내부망에서 접속 중인 PC 맥주소',
+    PRIMARY KEY (`online_list_log_id`),
+    FOREIGN KEY (`employee_id`) REFERENCES `employees`(`employee_number`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 5. 내부망에서 접속 중인 사원 테이블
+CREATE TABLE `online_list` (
+    `employee_id` INT NOT NULL COMMENT '사원 번호, employees 테이블 참조',
+    `online_ip` INT NOT NULL COMMENT '내부망에서 접속 중인 PC ip 뒷번호',
+    `login_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '접속한 시간',
+    `online_mac_addr` VARCHAR(17) NOT NULL COMMENT '내부망에서 접속 중인 PC 맥주소',
+    PRIMARY KEY (`employee_id`),
+    FOREIGN KEY (`employee_id`) REFERENCES `employees`(`employee_number`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 6. 웹 접근 로그 테이블
+CREATE TABLE `web_access_log` (
+    `web_access_log_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `online_list_log_id` INT NOT NULL COMMENT 'online_list_log 참조',
+    `target_url` VARCHAR(255) NOT NULL COMMENT '접근한 일반 도메인',
+    `access_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '접근 시간(5년 보관 후 자동 삭제)',
+    PRIMARY KEY (`web_access_log_id`),
+    FOREIGN KEY (`online_list_log_id`) REFERENCES `online_list_log`(`online_list_log_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 7. 블랙리스트 접근 로그 테이블
+CREATE TABLE `blacklist_addr_access_log` (
+    `blacklist_addr_access_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `online_list_log_id` INT NOT NULL COMMENT 'online_list_log 참조',
+    `blacklist_domain` VARCHAR(255) NOT NULL COMMENT '접근한 블랙리스트 도메인',
+    `access_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '접근 시간(5년 보관 후 자동 삭제)',
+    PRIMARY KEY (`blacklist_addr_access_id`),
+    FOREIGN KEY (`online_list_log_id`) REFERENCES `online_list_log`(`online_list_log_id`) ON DELETE CASCADE,
+    FOREIGN KEY (`blacklist_domain`) REFERENCES `blacklist_addr`(`blacklist_domain`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 8. [신규] IP-MAC 불일치/충돌 로그 테이블
+CREATE TABLE `online_ip_mac_mismatch_log` (
+    `online_ip_mac_mismatch_log_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `online_list_log_id` INT NOT NULL COMMENT 'online_list_log 테이블 참조',
+    `mismatch_mac_addr` VARCHAR(17) NOT NULL COMMENT '맞지 않은 MAC주소',
+    `insert_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '데이터가 추가된 시간(5년 보관 후 자동 삭제)',
+    PRIMARY KEY (`online_ip_mac_mismatch_log_id`),
+    FOREIGN KEY (`online_list_log_id`) REFERENCES `online_list_log`(`online_list_log_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- =========================================================
+-- 4. 자동 삭제 스케줄러 재설정
+-- =========================================================
+DELIMITER $$
+
+-- 혹시 기존에 남아있을 수 있는 이벤트 삭제
+DROP EVENT IF EXISTS auto_purge_all_tables$$
+
+-- 이벤트 스케줄러 생성
+CREATE EVENT internal_db.auto_purge_all_tables
+ON SCHEDULE EVERY 1 DAY
+STARTS CURRENT_TIMESTAMP
+COMMENT '가입희망자(1개월) 및 임시삭제/로그 데이터(5년) 매일 자동 영구 삭제'
+DO
+BEGIN
+    DELETE FROM prospective_members 
+    WHERE date_of_request <= DATE_SUB(NOW(), INTERVAL 1 MONTH);
+
+    DELETE FROM blacklist_addr 
+    WHERE deleted_at <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    DELETE FROM whitelist_addr 
+    WHERE deleted_at <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    DELETE FROM online_list_log 
+    WHERE login_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    DELETE FROM web_access_log 
+    WHERE access_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    DELETE FROM blacklist_addr_access_log 
+    WHERE access_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    DELETE FROM online_ip_mac_mismatch_log 
+    WHERE insert_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+END$$
+
+-- 구분자를 다시 원래대로 복구
+DELIMITER;
