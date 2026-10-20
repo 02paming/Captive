@@ -102,7 +102,7 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
 
 
 
-            LogPacket log_data; //로그 데이터.
+            LogPacket log_data; //로그 데이터...
 
             memset(&log_data, 0, sizeof(LogPacket));
     
