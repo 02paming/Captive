@@ -453,3 +453,80 @@ END$$
 
 -- 구분자를 다시 원래대로 복구
 DELIMITER;
+
+
+-- 261021
+-- blacklist_addr 테이블에 source 필드 추가
+-- blacklist_addr_access_log 테이블에 ai_score 필드 추가
+USE internal_db;
+
+-- =========================================================
+-- 1. blacklist_addr 테이블에 source 필드 추가
+-- =========================================================
+ALTER TABLE `blacklist_addr` 
+ADD COLUMN `source` VARCHAR(50) NOT NULL COMMENT 'USER/AI 중 어느 경로로 추가 되었는지에 대한 출처 정보';
+
+
+-- =========================================================
+-- 2. blacklist_addr_access_log 테이블에 ai_score 필드 추가 및 기존 데이터 기본값(-1) 설정
+-- =========================================================
+ALTER TABLE `blacklist_addr_access_log` 
+ADD COLUMN `ai_score` DOUBLE DEFAULT -1 COMMENT 'AI가 차단한 경우, 위험도 점수를 기록, blacklist_addr 테이블을 참조하면 차단한 경우 = -1(DEFAULT)';
+
+
+-- 3. dga_detection_log 테이블 생성
+CREATE TABLE `dga_detection_log` (
+    `dga_detection_log_id` INT NOT NULL AUTO_INCREMENT COMMENT 'AUTO_INCREMENT (기본키 ID)',
+    `online_list_log_id` INT NOT NULL COMMENT 'online_list_log 참조 (어떤 사원의 세션인지 연결)',
+    `domain` VARCHAR(255) NOT NULL COMMENT '탐지된 도메인 주소',
+    `entropy_score` DOUBLE NOT NULL COMMENT '계산된 엔트로피(무작위성) 수치',
+    `is_dga` BOOLEAN NOT NULL COMMENT 'DGA 악성 여부 (True / False)',
+    `access_time` DATETIME NOT NULL COMMENT '탐지 및 접속 시도 시간(5년 후 자동 삭제)',
+    PRIMARY KEY (`dga_detection_log_id`),
+    FOREIGN KEY (`online_list_log_id`) REFERENCES `online_list_log`(`online_list_log_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 4. 자동 삭제 이벤트 스케줄러 변경 (dga_detection_log의 access_time 기준 5년 지난 데이터 삭제 포함)
+SET GLOBAL event_scheduler = ON;
+
+DROP EVENT IF EXISTS auto_purge_all_tables$$
+
+CREATE EVENT internal_db.auto_purge_all_tables
+ON SCHEDULE EVERY 1 DAY
+STARTS CURRENT_TIMESTAMP
+COMMENT '가입희망자(1개월) 및 임시삭제/로그 데이터(5년) 매일 자동 영구 삭제'
+DO
+BEGIN
+    -- 1. 가입 요청자 테이블 (1개월 이상 경과)
+    DELETE FROM prospective_members 
+    WHERE date_of_request <= DATE_SUB(NOW(), INTERVAL 1 MONTH);
+
+    -- 2. 블랙리스트 사이트 임시 삭제 데이터 (5년 이상 경과)
+    DELETE FROM blacklist_addr 
+    WHERE deleted_at <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    -- 3. 화이트리스트 사이트 임시 삭제 데이터 (5년 이상 경과)
+    DELETE FROM whitelist_addr 
+    WHERE deleted_at <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    -- 4. 온라인 IP 로그 (5년 이상 경과)
+    DELETE FROM online_list_log 
+    WHERE login_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    -- 5. 웹 접근 로그 (5년 이상 경과)
+    DELETE FROM web_access_log 
+    WHERE access_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    -- 6. 블랙리스트 접근 로그 (5년 이상 경과)
+    DELETE FROM blacklist_addr_access_log 
+    WHERE access_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    -- 7. IP-MAC 불일치 로그 (5년 이상 경과)
+    DELETE FROM online_ip_mac_mismatch_log 
+    WHERE insert_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+
+    -- 8. DGA 탐지 이력 로그 (5년 이상 경과)
+    DELETE FROM dga_detection_log 
+    WHERE access_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+END;
