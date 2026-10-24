@@ -26,24 +26,14 @@ void* clean_thread(void* arg) {
 
 
         //추가 => 큐 방식으로 pop후 uds로 인증된사원 일반접속로그 보내기
-        while (log_queue.count > 0) {
-            //큐에서 데이터 하나 뽑아 로컬 변수로 안전하게 복사
-            LogPacket local_log = log_queue.nodes[log_queue.front];
-            log_queue.front = (log_queue.front + 1) % MAX_LOG_QUEUE;
-            log_queue.count--;
+        LogPacket local_log;
 
-            //PCAP 스레드가 멈추지 않도록 UDS 전송 직전에 큐 자물쇠 해제
-            pthread_mutex_unlock(&log_queue.queue_lock);
-
-            // 파이썬으로 웹 접속 로그 UDS 전송 
-            uds_client_sock_log(&local_log); 
-
-            //다음 큐 아이템 확인을 위해 다시 큐 자물쇠 잠금
-            pthread_mutex_lock(&log_queue.queue_lock);
+         while (pop_log_queue(&local_log)) {
+            
+            // PCAP 스레드가 멈추지 않도록 이미 위에서 자물쇠가 풀려있음!
+            uds_client_sock_log(&local_log);
+            
         }
-        
-        // 큐가 다 비워졌으므로 큐 자물쇠는 완전히 열어줌
-        pthread_mutex_unlock(&log_queue.queue_lock);
 
         pthread_mutex_lock(&lock); //여기부터는 기존의 화이트리스트 전용 자물쇠 사용
 

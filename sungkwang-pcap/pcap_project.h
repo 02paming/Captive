@@ -24,9 +24,47 @@
 
 #define MAX_BLACKLIST_COUNT 128
 #define MAX_LOG_QUEUE 1024
+#define MAX_AI_QUEUE 1024
 
 #define SOCKET_PATH "/tmp/authrized_ip"
 #define GC_SOCKET_PATH  "/tmp/pcap_gc.sock"
+
+// 파이썬 AI 서버와 약속된 소켓 경로
+#define AI_SOCKET_PATH "/tmp/ai_dga_socket.sock"
+
+// 해시 테이블 방의 개수 (소수(Prime Number)로 해야 충돌이 제일 적게 납니다. 약 10만 개 방)
+#define HASH_SIZE 100003
+
+#define LOG_PASS 0         // 정상 통과
+#define LOG_MANUAL_BLOCK 1 // 수동 블랙리스트 차단
+#define LOG_AI_BLOCK 2     // AI 자동 차단
+#define LOG_PENDING 3      // 임시 보류 (검사 중, RST만 쏴서 재전송 유도)
+
+//배열연결리스트 + 해쉬테이블 구조
+
+// 1. 해시 노드 (방 안에 들어갈 데이터)
+typedef struct HashNode {
+    char domain[128];       // 도메인 주소 (예: naver.com)
+    int block_type;        // 상태 플래그
+    struct HashNode *next;  // 재수가 없어서 해시 번호가 겹쳤을 때 뒤에 꼬리로 달기 위한 포인터
+} HashNode;
+
+// 2. 방패 본체 (이것이 A방패, B방패가 됩니다) A방패(블랙리스트검증해쉬테이블 1개 , 화이트리스트검증해쉬테이블1개) 이런식임
+typedef struct HashTable {
+    HashNode *table[HASH_SIZE]; // 10만 개의 방을 가진 거대한 배열
+} HashTable;
+
+// 1. 방패 2개와 활성 포인터를 담는 '더블 버퍼링 구조체' 정의
+typedef struct {
+    HashTable* shield_A;               // A 방패
+    HashTable* shield_B;               // B 방패 (예비용) 
+    HashTable* volatile active_shield; // 패킷 검사 스레드가 바라볼 진짜 포인터
+} DoubleBufferManager;
+
+// 2. 스레드들이 공유해서 볼 수 있도록 구조체 인스턴스 딱 1개만 전역 선언
+extern DoubleBufferManager black_manager;
+extern DoubleBufferManager white_manager;
+
 
 typedef struct {
   char *target_url[MAX_BLACKLIST_COUNT];
@@ -42,9 +80,13 @@ typedef struct {
     int is_mac_bound;        // MAC 바인딩 여부 (1: 바인딩됨)
 } AuthRecord; //인증레코드
 
+
+
+//로그용(ai차단추가용으로도씀) 큐
 typedef struct {
     char client_ip[16];
     char target_host[128]; 
+    int is_ai_blocked;
 } LogPacket; //인증된사원 일반접속로그
 
 typedef struct{
@@ -54,6 +96,21 @@ typedef struct{
     int count; // 현재 큐에 쌓인 패킷 개수
     pthread_mutex_t queue_lock; // 로그 전송 전용 자물쇠
 }SharedLogQueue; //일반접속로그 전용 큐 구조체
+
+//ai 분석용 큐
+typedef struct {
+    char domain[128];
+} AITask;
+
+typedef struct {
+    AITask tasks[MAX_AI_QUEUE];
+    int front;
+    int rear;
+    int count;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+} AIQueue;
+
 
 extern AuthRecord whitelist[256];
 extern pthread_mutex_t lock;
@@ -65,6 +122,8 @@ extern uint8_t latest_mac_cache[256][6];
 extern BlackListInfo check_manager;
 extern LogPacket log_date;
 extern SharedLogQueue log_queue;
+extern AIQueue ai_queue;
+extern pthread_mutex_t shield_lock;
 
 // TCP Checksum 계산을 위한 가상 헤더 구조체
 typedef struct {
@@ -87,7 +146,23 @@ int packet_mac_check(const int host_id, const uint8_t* packet_mac);
 
 void* uds_server_thread(void* arg);
 void* clean_thread(void* arg);
+void* ai_worker_thread(void* arg);
 void load_blacklist(void);
+void push_to_log_queue(const char* ip, const char* domain, int is_blocked_flag);
+void push_to_ai_task_queue(const char *domain);
+int pop_log_queue(LogPacket* out_log);
+int ask_ai_domain_status(const char* domain);
+
+//해쉬테이블쪽
+unsigned long hash_djb2(const char *str);
+HashTable* create_hash_table();
+void insert_hash_table(HashTable *ht, const char *domain, int block_type);
+HashNode* lookup_hash_table(HashTable *ht, const char *domain);
+void free_hash_table(HashTable *ht);
+void clear_hash_table(HashTable* ht);
+void load_domains_from_txt(HashTable *ht, const char *filepath,int block_type);
+
+
 
 // 인젝션 함수 모듈화
 void inject_redirect(pcap_t *handle_inject, const struct ether_header *ethernet,

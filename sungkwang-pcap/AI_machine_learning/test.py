@@ -2,12 +2,14 @@ import joblib
 import math
 import pandas as pd
 
+#플랜 a버전 테스트용.py
+
 # 1. 저장해둔 AI 뇌(모델) 깨우기
 print("업그레이드된 dga_model.pkl 뇌를 불러오는 중...")
-model = joblib.load('dga_model.pkl')
+model = joblib.load('model/dga_model.pkl')
 
 # 1차 방어막
-df = pd.read_csv('dga_train_ready.csv')
+df = pd.read_csv('data/dga_train_ready_korea_v2.csv')
 whitelist = set(df[df['label'] == 0]['domain'].astype(str))
 print(f"-> 1차 화이트리스트 명단 {len(whitelist)}개 장전 완료!")
 
@@ -63,15 +65,14 @@ for domain in test_domains:
         continue # 아래의 무거운 AI 계산은 건너뛰고 다음 도메인으로 넘어감!
 
     # -----------------------------------------------------------
-    # ★ [2차 검문소] 명단에 없는 '처음 보는 놈'들만 특징 5과목 계산 (사진 속 부분)
-    length = len(domain)
+    # ★ [2차 검문소] 명단에 없는 '처음 보는 놈'들만 특징 4과목 계산 (사진 속 부분)
     entropy = get_entropy(domain)
     vowel_ratio = get_vowel_ratio(domain)
     max_cons = get_max_consecutive_consonants(domain)
     digit_ratio = get_digit_ratio(domain)
     
-    features = pd.DataFrame([[length, entropy, vowel_ratio, max_cons, digit_ratio]], 
-                            columns=['length', 'entropy', 'vowel_ratio', 'max_cons', 'digit_ratio'])
+    features = pd.DataFrame([[entropy, vowel_ratio, max_cons, digit_ratio]], 
+                            columns=['entropy', 'vowel_ratio', 'max_cons', 'digit_ratio'])
     
     prediction = model.predict(features)[0] 
     probabilities = model.predict_proba(features)[0] 
