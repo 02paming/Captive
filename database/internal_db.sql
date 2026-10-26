@@ -490,7 +490,7 @@ CREATE TABLE `dga_detection_log` (
 -- 4. 자동 삭제 이벤트 스케줄러 변경 (dga_detection_log의 access_time 기준 5년 지난 데이터 삭제 포함)
 SET GLOBAL event_scheduler = ON;
 
-DROP EVENT IF EXISTS auto_purge_all_tables$$
+DROP EVENT IF EXISTS auto_purge_all_tables;
 
 CREATE EVENT internal_db.auto_purge_all_tables
 ON SCHEDULE EVERY 1 DAY
@@ -530,3 +530,22 @@ BEGIN
     DELETE FROM dga_detection_log 
     WHERE access_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
 END;
+
+
+
+-- 5. 설비 구동 시간 테이블 생성
+CREATE TABLE IF NOT EXISTS `eqp_run_time` (
+    `eqp_run_time_id` INT NOT NULL AUTO_INCREMENT COMMENT 'eqp_run_time의 id',
+    `work_start_time` TIME NOT NULL COMMENT '출근 시간',
+    `work_end_time` TIME NOT NULL COMMENT '퇴근 시간',
+    `waiting_time` TIME NOT NULL COMMENT '대기 시간 주기',
+    PRIMARY KEY (`eqp_run_time_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+-- 261026
+USE internal_db;
+
+-- whitelist_addr 테이블에 is_protected 필드 추가
+ALTER TABLE `whitelist_addr` 
+ADD COLUMN `is_protected` BOOLEAN NOT NULL DEFAULT 0 COMMENT '데이터 보호 처리';
