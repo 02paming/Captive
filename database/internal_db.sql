@@ -549,3 +549,21 @@ USE internal_db;
 -- whitelist_addr 테이블에 is_protected 필드 추가
 ALTER TABLE `whitelist_addr` 
 ADD COLUMN `is_protected` BOOLEAN NOT NULL DEFAULT 0 COMMENT '데이터 보호 처리';
+
+
+-- 261027
+USE internal_db;
+
+-- 1. 고정 블랙리스트 테이블 생성
+CREATE TABLE IF NOT EXISTS `fixed_blacklist_addr` (
+    `fixed_blacklist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `fixed_blacklist_domain` VARCHAR(255) NOT NULL COMMENT 'KISA에서 내려받은 ai 교육용 blacklist 도메인',
+    PRIMARY KEY (`fixed_blacklist_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2. 고정 화이트리스트 테이블 생성
+CREATE TABLE IF NOT EXISTS `fixed_whitelist_addr` (
+    `fixed_whitelist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `fixed_whitelist_domain` VARCHAR(255) NOT NULL COMMENT 'KISA에서 내려받은 ai 교육용 whitelist 도메인',
+    PRIMARY KEY (`fixed_whitelist_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
