@@ -567,3 +567,55 @@ CREATE TABLE IF NOT EXISTS `fixed_whitelist_addr` (
     `fixed_whitelist_domain` VARCHAR(255) NOT NULL COMMENT 'KISA에서 내려받은 ai 교육용 whitelist 도메인',
     PRIMARY KEY (`fixed_whitelist_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SELECT 
+    (SELECT COUNT(*) FROM fixed_blacklist_addr) AS fb_count,
+    (SELECT COUNT(*) FROM fixed_whitelist_addr) AS fw_count;
+
+
+-- 261028
+USE internal_db;
+
+-- 외래 키 체크 임시 해제
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- 1. 기존 리스트 테이블명 변경 (whitelist_addr -> user_whitelist_addr, blacklist_addr -> user_blacklist_addr)
+RENAME TABLE `whitelist_addr` TO `user_whitelist_addr`;
+RENAME TABLE `blacklist_addr` TO `user_blacklist_addr`;
+
+-- 2. User용 테이블 필드 수정 (PK명 변경, source 필드 제거)
+-- 2-1. user_whitelist_addr 수정
+ALTER TABLE `user_whitelist_addr` 
+    CHANGE COLUMN `whitelist_id` `user_whitelist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id';
+
+-- 2-2. user_blacklist_addr 수정 (source 필드 제거 및 PK명 변경)
+ALTER TABLE `user_blacklist_addr` 
+    CHANGE COLUMN `blacklist_id` `user_blacklist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    DROP COLUMN `source`;
+
+-- 3. 이미 존재하는 고정 도메인 테이블의 비고(COMMENT) 갱신 (깃허브 출처 반영)
+ALTER TABLE `fixed_blacklist_addr` 
+    MODIFY COLUMN `fixed_blacklist_domain` VARCHAR(255) NOT NULL COMMENT '깃허브에서 내려받은 ai 교육용 blacklist 도메인';
+
+ALTER TABLE `fixed_whitelist_addr` 
+    MODIFY COLUMN `fixed_whitelist_domain` VARCHAR(255) NOT NULL COMMENT '깃허브에서 내려받은 ai 교육용 whitelist 도메인';
+
+-- 4. AI용 블랙리스트/화이트리스트 테이블 신규 생성 (없는 경우에만 생성)
+CREATE TABLE IF NOT EXISTS `AI_blacklist_addr` (
+    `AI_blacklist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `blacklist_domain` VARCHAR(255) NOT NULL COMMENT '접근 금지(블랙 리스트) 사이트 도메인',
+    `deleted_at` DATE DEFAULT NULL COMMENT '접근 금지 사이트 임시 삭제 일자(5년 보관 후 자동 삭제)',
+    `risk_level` INT NOT NULL COMMENT '해당 주소를 AI모델이 구분한 위험도',
+    PRIMARY KEY (`AI_blacklist_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `AI_whitelist_addr` (
+    `AI_whitelist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    `whitelist_domain` VARCHAR(255) NOT NULL COMMENT '화이트 리스트 사이트 도메인',
+    `deleted_at` DATE DEFAULT NULL COMMENT '화이트 리스트 사이트 임시 삭제 일자(5년 보관 후 자동 삭제)',
+    `is_protected` BOOLEAN NOT NULL DEFAULT 0 COMMENT '데이터 보호 처리',
+    PRIMARY KEY (`AI_whitelist_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 외래 키 체크 복구
+SET FOREIGN_KEY_CHECKS = 1;
