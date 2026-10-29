@@ -1,0 +1,77 @@
+/* frontend/src/pages/MyPage.css */
+.main-landing-container {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 세련된 푸른색 그라데이션 배경 */
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  font-family: 'Pretendard', sans-serif;
+}
+
+.main-hero-box {
+  text-align: center;
+  background: white;
+  padding: 60px 80px;
+  border-radius: 20px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
+  animation: slideUp 0.5s ease-out;
+}
+
+.main-title {
+  font-size: 3.5rem;
+  color: #2c3e50;
+  margin: 0 0 10px 0;
+  letter-spacing: -1px;
+}
+
+.main-subtitle {
+  font-size: 1.2rem;
+  color: #7f8c8d;
+  margin-bottom: 40px;
+}
+
+.main-btn-group {
+  display: flex;
+  gap: 15px;
+  justify-content: center;
+}
+
+.main-btn {
+  padding: 15px 30px;
+  font-size: 1.1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: all 0.2s ease;
+}
+
+.main-btn.primary {
+  background-color: #3498db;
+  color: white;
+  border: none;
+  box-shadow: 0 4px 15px rgba(52, 152, 219, 0.3);
+}
+
+.main-btn.secondary {
+  background-color: white;
+  color: #3498db;
+  border: 2px solid #3498db;
+}
+
+.main-btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.05);
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -1,0 +1,88 @@
+/* 화면 전체를 덮는 반투명 검은색 배경 */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.4);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  /* 다른 화면들보다 무조건 맨 위에 오도록 설정 */
+}
+
+/* 팝업 박스 디자인 및 튀어오르는 애니메이션 */
+.modal-box {
+  background: white;
+  padding: 30px;
+  border-radius: 12px;
+  width: 320px;
+  text-align: center;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+  animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* 모달 등장 애니메이션 */
+@keyframes popIn {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.modal-title {
+  margin: 0 0 15px 0;
+  color: #2c3e50;
+  font-size: 20px;
+}
+
+.modal-message {
+  color: #7f8c8d;
+  font-size: 15px;
+  margin-bottom: 25px;
+  line-height: 1.5;
+}
+
+/* 하단 버튼 영역 */
+.modal-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.modal-confirm-btn,
+.modal-cancel-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: 0.2s;
+  flex: 1;
+  /* 버튼 너비를 동일하게 맞춤 */
+}
+
+.modal-confirm-btn {
+  background-color: #3498db;
+  color: white;
+}
+
+.modal-confirm-btn:hover {
+  background-color: #2980b9;
+}
+
+.modal-cancel-btn {
+  background-color: #ecf0f1;
+  color: #7f8c8d;
+}
+
+.modal-cancel-btn:hover {
+  background-color: #bdc3c7;
+}

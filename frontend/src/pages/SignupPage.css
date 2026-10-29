@@ -1,0 +1,38 @@
+/* 로그인 페이지(LoginPage.css)와 유사한 구조를 사용하여 통일성을 줍니다. */
+.signup-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #f4f7f6;
+}
+
+.signup-box {
+  background-color: white;
+  padding: 40px;
+  border-radius: 10px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 450px;
+  position: relative;
+}
+
+.signup-box h2 {
+  text-align: center;
+  color: #2c3e50;
+  margin-top: 10px;
+  margin-bottom: 5px;
+}
+
+.signup-desc {
+  text-align: center;
+  color: #7f8c8d;
+  font-size: 14px;
+  margin-bottom: 30px;
+}
+
+.signup-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}

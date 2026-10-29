@@ -1,0 +1,23 @@
+[
+    {
+        "version": "v1.0",
+        "model_type": "기초 버전 RandomForest + N-gram",
+        "trained_at": "2026-10-28 12:01:40",
+        "hyperparameters": {
+            "n_estimators": 150,
+            "max_features": 5000
+        },
+        "confusion_matrix": {
+            "TP": 19016,
+            "TN": 19599,
+            "FP": 464,
+            "FN": 920
+        },
+        "scores": {
+            "accuracy": 96.54,
+            "precision": 97.62,
+            "recall": 95.39,
+            "f1_score": 96.49
+        }
+    }
+]
