@@ -16,14 +16,14 @@ void* clean_thread(void* arg) {
         // 스레드는 자물쇠(뮤텍스)를 스스로 풀고 60초간 깊은 수면에 빠짐
         // 누군가 cond_signal로 깨우면 즉시 일어나서 자물쇠를 다시 잠금
         pthread_cond_timedwait(&cond, &log_queue.queue_lock, &ts);
-
+        
         // 깨어난 직후 가장 먼저 할 일: 종료 신호인지 확인 
         if (!keep_running) {
             printf("[GC Thread and log Thread] 종료 신호 확인. 락을 풀고 퇴근합니다.\n");
             pthread_mutex_unlock(&log_queue.queue_lock); // 쥐고 있던 자물쇠 풀기
             break; // while 루프 탈출
         }
-
+        pthread_mutex_unlock(&log_queue.queue_lock);
 
         //추가 => 큐 방식으로 pop후 uds로 인증된사원 일반접속로그 보내기
         LogPacket local_log;

@@ -35,7 +35,7 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
     payload_start = (char *)payload; 
 
     // 성광님이 짚어주신 필수 방어 로직 (페이로드 없으면 즉시 버림)
-    if (payload_size == 0) {
+    if (payload_size <= 0) {
         return; 
     }
 
@@ -101,49 +101,59 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
     // 1. 현재 쥐고 있는 블랙 방패(블랙 해시테이블) 0초 컷으로 검색
     // A. 1차 방어선: 화이트 방패 검색 (0초 컷 통과)
     HashNode* white_node = lookup_hash_table(white_manager.active_shield, check_site);
+    HashNode* black_node = lookup_hash_table(black_manager.active_shield, check_site);
+
     if (white_node != NULL) {
+      printf("[디버그] 화이트 방패 발견! 도메인: %s / 계급(type): %d\n", white_node->domain, white_node->block_type);
+    }
+    if (black_node != NULL) {
+      printf("[디버그] 블랙 방패 발견! 도메인: %s / 계급(type): %d\n", black_node->domain, black_node->block_type);
+    }
+
+    // [1계급 절대 통과] 관리자가 수동으로 예외 처리한 도메인인가? (가장 먼저 확인)
+    if (white_node != NULL && white_node->block_type == LOG_MANUAL_PASS) {
         goto NORMAL_PASS_LOGIC; 
     }
 
-    // B. 2차 방어선: 블랙 방패 검색
-    HashNode* black_node = lookup_hash_table(black_manager.active_shield, check_site);
-
-    // [미지 도메인 (Greylisting)]
-    if (black_node == NULL) {
-      push_to_ai_task_queue(check_site); // 무조건 큐에 Push
-
-      if (ip->ip_p == IPPROTO_UDP) {
-        return; // DNS는 시간 벌기
-      }
-      else if (ip->ip_p == IPPROTO_TCP) {
-        // 다이렉트 TCP는 방패에 PENDING으로 꽂아두고 RST 발사 (재전송 유도)
-        insert_hash_table(black_manager.active_shield, check_site, LOG_PENDING);
-        inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
-        return; 
-      }
+    // [2계급 절대 차단] 관리자 수동 차단이거나 AI가 확정 차단한 도메인인가?
+    if (black_node != NULL && (black_node->block_type == LOG_MANUAL_BLOCK || black_node->block_type == LOG_AI_BLOCK)) {
+        if (ip->ip_p == IPPROTO_TCP) {
+            printf("[차단 타격!] 관리자/AI 차단 사이트 접속 끊음!! [%s]\n", check_site);
+            inject_redirect_blocked(handle_inject, ethernet, ip, tcp, payload_size);
+            inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
+            if(black_node->block_type == LOG_AI_BLOCK)
+              push_to_log_queue(inet_ntoa(ip->ip_src), check_site, black_node->block_type); 
+            return;
+        } else if (ip->ip_p == IPPROTO_UDP) 
+          return;
     }
-    // [방패에 걸린 도메인 타격]
-    else {
-      if (ip->ip_p == IPPROTO_TCP) {
-        if (black_node->block_type == LOG_PENDING) {
-          // AI 검사 중인데 또 들어온 패킷은 가차없이 밀어냄
-          inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
-          return;
-        } else {
-          // 진짜 악성 사이트 (수동 or AI 차단)
-          printf("[차단 타격!] 접근 금지사이트 접속 끊음!! [%s]\n", check_site);
-          inject_redirect_blocked(handle_inject, ethernet, ip, tcp, payload_size);
-          inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
-          push_to_log_queue(inet_ntoa(ip->ip_src), check_site, black_node->block_type); 
-          return;
-        }
-      }
-      else if (ip->ip_p == IPPROTO_UDP) {
-        return; 
-      }
-  }
 
-    // C. 3차 방어선: 정상 통과 및 로깅
+    // [3계급 조건부 통과] AI가 예전에 검사해서 정상이라고 판단했던 도메인인가?
+    if (white_node != NULL && white_node->block_type == LOG_PASS) {
+        goto NORMAL_PASS_LOGIC; 
+    }
+
+    // [4계급 미지 도메인] 화이트/블랙 어디에도 없음 (Greylisting 시작)
+    if (black_node == NULL) {
+        if (ip->ip_p == IPPROTO_TCP) {
+            insert_hash_table(black_manager.active_shield, check_site, LOG_PENDING);
+        }
+        push_to_ai_task_queue(check_site); 
+
+        if (ip->ip_p == IPPROTO_UDP) return; 
+        else if (ip->ip_p == IPPROTO_TCP) {
+            inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
+            return; 
+        }
+    } 
+    else if (black_node->block_type == LOG_PENDING) {
+        if (ip->ip_p == IPPROTO_TCP) {
+            inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
+            return;
+        } else if (ip->ip_p == IPPROTO_UDP) return;
+    }
+
+    //정상 통과 및 로깅
     NORMAL_PASS_LOGIC:
     if (ip->ip_p == IPPROTO_TCP) {
       if (payload_size < 4 || strncmp(payload_start, "GET ", 4) != 0 || memmem(payload_start, payload_size, "Accept: text/html", 17) == NULL) return;
@@ -165,31 +175,30 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
   // is_authenticated에 2가들어와 걸림 다른 위협접근도 일로오게해서 사유만
   // 다르게 보내면될거같음
   else if (is_authenticated == 2) {
-
     printf("ip 스푸핑 감지!! 차단페이지로 페이지이동!\n");
 
-    // 리다이렉트 무한 루프 방지
-    if (strstr((char *)payload, "Host: 192.168.3.243/ban") != NULL)
-      return;
+    // ★ UDP 방어막 추가: TCP일 때만 리다이렉트와 RST를 쏜다
+    if (ip->ip_p == IPPROTO_TCP) {
+      if (strstr((char *)payload, "Host: 192.168.3.243/ban") != NULL)
+        return;
 
-    inject_redirect_ban(handle_inject, ethernet, ip, tcp, payload_size);
-
-    inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
-
+      inject_redirect_ban(handle_inject, ethernet, ip, tcp, payload_size);
+      inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
+    }
   }
 
   else if (is_authenticated == 0) {
-
     printf("인증이 아직안된 계정입니다. 인증해주세요! [%s]\n", inet_ntoa(ip->ip_src));
 
-    // 리다이렉트 무한 루프 방지
-    if (strstr((char *)payload, "Host: 192.168.3.243") != NULL)
-      return;
+    // ★ UDP 방어막 추가: TCP일 때만 리다이렉트와 RST를 쏜다
+    if (ip->ip_p == IPPROTO_TCP) {
+      if (strstr((char *)payload, "Host: 192.168.3.243") != NULL)
+          return;
 
-    // 1. 리다이렉트 패킷 생성 및 주입
-    inject_redirect(handle_inject, ethernet, ip, tcp, payload_size);
-
-    // 2. RST 패킷 생성 및 주입
-    inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
+      // 1. 리다이렉트 패킷 생성 및 주입
+      inject_redirect(handle_inject, ethernet, ip, tcp, payload_size);
+      // 2. RST 패킷 생성 및 주입
+      inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
+    }
   }
 }

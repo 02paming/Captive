@@ -48,6 +48,14 @@ def handle_client(conn, addr):
       if not domain:
         return
 
+      # 테스트용 강제 하드코딩 추가
+      # if domain == "example.com":
+      #     print(f"[TEST] {domain} AI 정밀 분석 중... (0.035초초 소요)")
+      #     time.sleep(0.035) # 실제 AI 연산 + DB 갱신 딜레이 0.078초 부여
+      #     print(f"[TEST] {domain} 강제 악성 도메인(BLOCK) 판정!")
+      #     conn.sendall(b"BLOCK")
+      #     return
+
       start_time = time.time()
       status = "PASS"
 
@@ -55,8 +63,25 @@ def handle_client(conn, addr):
       if domain in whitelist:
         status = "PASS"
 
+      #글로벌 빅테크/CDN 신뢰 도메인 프리패스 (오탐지 방지용) 추후 수정해도됨
+      elif any(
+          domain.endswith(suffix)
+          for suffix in [
+              '.google.com',
+              '.googleapis.com',
+              '.googlevideo.com',
+              '.microsoft.com',
+              '.azureedge.net',
+              '.msedge.net',
+              '.windowsupdate.com',
+              '.apple.com',
+              '.cern.ch',
+          ]
+      ):
+        status = "PASS"
+
       # 2. 하드 룰 차단 로직
-      elif len(domain) > 20 or get_max_cons(domain) > 8:
+      elif len(domain) > 50 or get_max_cons(domain) > 10:
         status = "BLOCK"
 
       # 3. 미지의 도메인 AI 정밀 분석
@@ -73,7 +98,7 @@ def handle_client(conn, addr):
 
       # 처리 시간 측정 (밀리초)
       elapsed_ms = (time.time() - start_time) * 1000
-      print(f"[LOG] {domain:<25} | 판정: {status:<8} | 소요시간: {elapsed_ms:.3f}ms")
+      print(f"[LOG] {domain:<35} | 판정: {status:<8} | 소요시간: {elapsed_ms:.3f}ms")
 
       # C엔진으로 결과 즉시 반환
       conn.sendall(status.encode('utf-8'))

@@ -21,6 +21,7 @@ API_AUTH_IP_DELETE = "http://192.168.3.23:8080/api/logout"
 
 # 추가 초기동기화 api
 API_INITIAL_SYNC = "http://192.168.3.23:8080/api/active_sessions"
+API_DOMAINS_SYNC = "http://192.168.3.23:8080/api/active_domains"
 
 # 추가 위협탐지로그
 API_BLACKLIST_LOG = "http://192.168.3.23:8080/api/blacklist_log"
@@ -30,6 +31,8 @@ API_WEB_ACCESS_LOG = "http://192.168.3.23:8080/api/web_access_log"
 
 # 추가 AI가 감지한 블랙리스트 추가
 API_AI_BLACKLIST_INSERT = "http://192.168.3.23:8080/api/ai_block"
+
+
 
 
 @app.after_request
@@ -145,50 +148,28 @@ def auth():
     return render_template("fail.html")
 
 
-def send_host_id_via_uds(command, auth_payload):
-  # (기존 UDS 통신 코드는 변경 없음)
-  client_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-  try:
-    client_socket.connect(SOCKET_PATH)
-    message = f"{command} {auth_payload}\n"
-    client_socket.sendall(message.encode("utf-8"))
-
-    if command == "GETMAC":  # 맥 받는 요청용 uds일때
-      response = client_socket.recv(1024).decode("utf-8").strip()
-
-      # 정상적인 응답이 왔다면 MAC 반환, 빈 값이면 None 반환
-      if response and response != "00:00:00:00:00:00":
-        return response
-      return None
-
-  except socket.error as e:
-    raise RuntimeError(f"UDS Socket 연결 실패: {e}")
-  finally:
-    client_socket.close()
-
-# 웹서버 백엔드(192.168.3.23)가 쏴주는 데이터를 받는 곳
-
 
 @app.route("/api/update_domains", methods=["POST"])
 def update_domains():
-  data = request.json
-  domains = data.get("active_domains", [])
-
-  # 1. 받은 도메인들을 텍스트 파일로 저장 (C 프로그램이 읽기 쉽게)
-  with open("/tmp/blacklist.txt", "w", encoding="utf-8") as f:
-    for item in domains:
-      f.write(f"{item['domain']}\n")
-
-  print(f"\n[PCAP 로그] 총 {len(domains)}개의 금지 도메인을 blacklist.txt 에 갱신했습니다.")
-
-  # 2.  C 프로그램에게 UDS로 RELOAD 신호 쏘기! // 함수 재활용 payload는 없음으로 "0"
-  try:
-    send_host_id_via_uds("RELOAD", "0")
-    print("[PCAP 로그] C 프로그램으로 RELOAD 신호를 전송했습니다.")
-  except Exception as e:
-    print(f"[PCAP 에러] RELOAD 신호 전송 실패: {e}")
-
-  return jsonify({"status": "success", "count": len(domains)}), 200
+    data = request.json
+    
+    # 장고 웹서버에서 '단건'으로 보낸 액션(add/delete), 타입(black/white), 도메인을 받음
+    action = data.get("action")  # "add" 또는 "delete"
+    sync_type = data.get("sync_type") # "black" 또는 "white"
+    domain = data.get("domain") # "hacker.com"
+    
+    # 1. 텍스트 파일 생성(f.write) 로직 완전히 삭제됨!
+    # 2. UDS 명령어 조합 (예: ADD_BLACK, DEL_WHITE 등)
+    command = f"{'ADD' if action == 'add' else 'DEL'}_{sync_type.upper()}"
+    
+    # 3. 파일 없이 곧바로 C엔진으로 단건 쏴주기
+    try:
+        send_host_id_via_uds(command, domain)
+        print(f"[PCAP 갱신] C엔진으로 0초 컷 업데이트 완료: {command} {domain}")
+    except Exception as e:
+        print(f"[PCAP 에러] UDS 신호 전송 실패: {e}")
+        
+    return jsonify({"status": "success", "domain": domain, "command": command}), 200
 
 # 신규추가! 웹서버 백엔드가 pcap백엔드로 쏘고 거기서 멍텅구리백엔드(여기)로 쏘면서 관리자가 지정한 ip(혹은id) 차단하는곳
 
@@ -232,6 +213,29 @@ def update_online():
 #     finally:
 #         client_socket.close()
 
+
+def send_host_id_via_uds(command, auth_payload):
+  # (기존 UDS 통신 코드는 변경 없음)
+  client_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+  try:
+    client_socket.connect(SOCKET_PATH)
+    message = f"{command} {auth_payload}\n"
+    client_socket.sendall(message.encode("utf-8"))
+
+    if command == "GETMAC":  # 맥 받는 요청용 uds일때
+      response = client_socket.recv(1024).decode("utf-8").strip()
+
+      # 정상적인 응답이 왔다면 MAC 반환, 빈 값이면 None 반환
+      if response and response != "00:00:00:00:00:00":
+        return response
+      return None
+
+  except socket.error as e:
+    raise RuntimeError(f"UDS Socket 연결 실패: {e}")
+  finally:
+    client_socket.close()
+
+# 웹서버 백엔드(192.168.3.23)가 쏴주는 데이터를 받는 곳
 
 # 추가 인증초기화 usd 서버 역할의 함수 (백엔드로쏴서 인증테이블 db 행 삭제용(혹은 status 업데이트로갈건지 추후 상의))
 def gc_uds_server():
@@ -305,22 +309,29 @@ def handle_uds_client(conn):
           )
         except Exception as e:
           print(f"[API 전달 실패] 로그 저장 오류: {e}")
-      elif command == "AI" and len(parts) >= 3:
 
+      elif command == "AI" and len(parts) >= 3:
         client_ip = parts[1]
         target_url = parts[2]
-
-        with open("/tmp/ai_blacklist.txt", "a", encoding="utf-8") as f:
-          f.write(f"{target_url}\n")
-        # 2. 웹 서버 PC의 PCAP 백엔드(8080)로 DB 인서트 지시
+        
+        # 1. 백엔드로 보낼 JSON 데이터 세팅
+        data = {
+            "client_ip": client_ip.split(".")[-1],
+            "target_url": target_url
+        }
+        
+        print(f"\n[UDS 수신] AI 자동 차단 (DB 업데이트 요청) -> IP: {client_ip} / 도메인: {target_url}")
+        
+        # 2. 파일 쓰기 대신 백엔드의 /api/ai_block API로 POST 전송
         try:
-          pcap_backend_url = API_AI_BLACKLIST_INSERT
-          requests.post(pcap_backend_url, json={
-                        "target_url": target_url}, timeout=2)
+            response = requests.post(
+                API_AI_BLACKLIST_INSERT, 
+                json=data,
+                timeout=3
+            )
+            print(f"   [API 전달 성공] DB에 AI 차단 도메인 반영 완료")
         except Exception as e:
-          print(f"PCAP 백엔드 DB 추가 요청 실패: {e}")
-
-        print(f"[트랙 B 작동] AI 자동 차단 수신 - IP: {client_ip}, 도메인: {target_url}")
+            print(f"   [API 전달 실패] DB 업데이트 오류: {e}")
   finally:
     conn.close()
 
@@ -331,7 +342,9 @@ def run_initial_sync():
 
   try:
     response = requests.get(API_INITIAL_SYNC)
+    domain_res = requests.get(API_DOMAINS_SYNC)
 
+    #인증정보동기화
     if response.status_code == 200:
 
       # 딕셔너리화
@@ -370,6 +383,19 @@ def run_initial_sync():
         print(f"백엔드 응답오류 : success가 아니라는뜻!")
     else:
       print("HTTP상태응답코드 오류 : 200이 아니라는뜻!")
+
+      #도메인동기화
+    if domain_res.status_code == 200 and domain_res.json().get("status") == "success":
+        db_domains = domain_res.json().get("data", [])
+        
+        for item in db_domains:
+            # item 딕셔너리에 {"type": "black", "domain": "hacker.com"} 이 있다고 가정
+            cmd = "ADD_BLACK" if item["type"] == "black" else "ADD_WHITE"
+            
+            # C엔진으로 도메인 1개씩 복구 명령 쏘기 (런타임 단건 갱신용 UDS 명령어 재활용!)
+            send_host_id_via_uds(cmd, item["domain"])
+            
+        print(f"=== [초기 동기화 완료] DB 누적 도메인 총 {len(db_domains)}개 복구 ===")
   except Exception as e:
     print(f"run_initial_sync() 중 에러발생!! (백엔드서버안켜서 get안되서 에러낫을확률 큼) {e}")
   # 이 멍텅구리 웹서버를 안키고 pcap서버(c코드)를 키면 초기동기화가안됌 하지만 이후 웹서버를 키면서 다시됨 지장없음

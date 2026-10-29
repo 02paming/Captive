@@ -33,12 +33,13 @@
 #define AI_SOCKET_PATH "/tmp/ai_dga_socket.sock"
 
 // 해시 테이블 방의 개수 (소수(Prime Number)로 해야 충돌이 제일 적게 납니다. 약 10만 개 방)
-#define HASH_SIZE 100003
+#define HASH_SIZE 200001
 
 #define LOG_PASS 0         // 정상 통과
 #define LOG_MANUAL_BLOCK 1 // 수동 블랙리스트 차단
 #define LOG_AI_BLOCK 2     // AI 자동 차단
 #define LOG_PENDING 3      // 임시 보류 (검사 중, RST만 쏴서 재전송 유도)
+#define LOG_MANUAL_PASS 4  // 관리자 수동 화이트리스트 예외처리
 
 //배열연결리스트 + 해쉬테이블 구조
 
@@ -65,12 +66,6 @@ typedef struct {
 extern DoubleBufferManager black_manager;
 extern DoubleBufferManager white_manager;
 
-
-typedef struct {
-  char *target_url[MAX_BLACKLIST_COUNT];
-  u_int count;
-  pthread_mutex_t lock;
-} BlackListInfo; //블랙리스트 정보
 
 typedef struct {
     int is_active;           // 1: 인증됨, 0: 차단
@@ -119,8 +114,6 @@ extern volatile sig_atomic_t keep_running;
 extern int server_fd;
 extern pcap_t *handle;
 extern uint8_t latest_mac_cache[256][6];
-extern BlackListInfo check_manager;
-extern LogPacket log_date;
 extern SharedLogQueue log_queue;
 extern AIQueue ai_queue;
 extern pthread_mutex_t shield_lock;
@@ -147,7 +140,6 @@ int packet_mac_check(const int host_id, const uint8_t* packet_mac);
 void* uds_server_thread(void* arg);
 void* clean_thread(void* arg);
 void* ai_worker_thread(void* arg);
-void load_blacklist(void);
 void push_to_log_queue(const char* ip, const char* domain, int is_blocked_flag);
 void push_to_ai_task_queue(const char *domain);
 int pop_log_queue(LogPacket* out_log);
@@ -157,6 +149,7 @@ int ask_ai_domain_status(const char* domain);
 unsigned long hash_djb2(const char *str);
 HashTable* create_hash_table();
 void insert_hash_table(HashTable *ht, const char *domain, int block_type);
+int delete_from_hash_table(HashTable *ht, const char *domain);
 HashNode* lookup_hash_table(HashTable *ht, const char *domain);
 void free_hash_table(HashTable *ht);
 void clear_hash_table(HashTable* ht);

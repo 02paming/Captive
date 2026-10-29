@@ -34,12 +34,41 @@ void* ai_worker_thread(void* arg) {
         if (ai_verdict == 1) { 
             // 악성이면 블랙 방패의 상태를 PENDING(3) -> AI_BLOCK(2) 로 덮어쓰기
             printf("[AI 헌터] 신종 악성 감지! 블랙 방패 장전 [%s]\n", check_site);
-            insert_hash_table(black_manager.active_shield, check_site, LOG_AI_BLOCK);
+            // 1. 현재 뒤에서 쉬고 있는 예비 방패(Standby)가 A인지 B인지 찾기
+            HashTable *standby_shield = (black_manager.active_shield == black_manager.shield_A) ? black_manager.shield_B : black_manager.shield_A;
+
+            // 2. 쉬고 있는 방패에 도메인 1개 쏙 집어넣기 (아무도 안 보고 있으니 뮤텍스 Lock 불필요!)
+            insert_hash_table(standby_shield, check_site, LOG_AI_BLOCK);
+
+            // 3. 패킷 검사 스레드의 시선을 새 방패로 휙 돌림 (Swap)
+            __atomic_store_n(&black_manager.active_shield, standby_shield, __ATOMIC_SEQ_CST);
+
+            // 4. 이제 방금 전까지 실전에서 뛰다가 뒤로 밀려나 쉬게 된 구형 방패 찾기
+            HashTable *old_active_shield = (standby_shield == black_manager.shield_A) ? black_manager.shield_B : black_manager.shield_A;
+            
+            // 5. 구형 방패에도 똑같이 도메인 1개 집어넣어서 양쪽 방패 상태 100% 동기화 (완료!)
+            insert_hash_table(old_active_shield, check_site, LOG_AI_BLOCK);
         } 
         else {
+            printf("[AI 헌터] 정상 감지! 화이트 방패 장전 [%s]\n", check_site);
             // 정상이면 화이트 방패에 꽂아서 다음번엔 무사통과시키기
             // (블랙 방패에 있는 PENDING 찌꺼기는 무시됨. 어차피 핸들러에서 화이트를 먼저 봄)
-            insert_hash_table(white_manager.active_shield, check_site, LOG_PASS);
+            // insert_hash_table(white_manager.active_shield, check_site, LOG_PASS);
+
+            HashTable *standby_shield = (white_manager.active_shield == white_manager.shield_A) ? white_manager.shield_B : white_manager.shield_A;
+
+            // 2. 쉬고 있는 방패에 도메인 1개 쏙 집어넣기 (아무도 안 보고 있으니 뮤텍스 Lock 불필요!)
+            insert_hash_table(standby_shield, check_site, LOG_PASS);
+
+            // 3. 패킷 검사 스레드의 시선을 새 방패로 휙 돌림 (Swap)
+            __atomic_store_n(&white_manager.active_shield, standby_shield, __ATOMIC_SEQ_CST);
+
+            // 4. 이제 방금 전까지 실전에서 뛰다가 뒤로 밀려나 쉬게 된 구형 방패 찾기
+            HashTable *old_active_shield = (standby_shield == white_manager.shield_A) ? white_manager.shield_B : white_manager.shield_A;
+            
+            // 5. 구형 방패에도 똑같이 도메인 1개 집어넣어서 양쪽 방패 상태 100% 동기화 (완료!)
+            insert_hash_table(old_active_shield, check_site, LOG_PASS);
+
         }
     }
     return NULL;

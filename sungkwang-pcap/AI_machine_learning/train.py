@@ -1,13 +1,13 @@
 import pandas as pd
-import math
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_extraction.text import TfidfVectorizer
 import joblib
 import time
-import requests
-import zipfile
-import io
-import tldextract
+import os
+import json
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
+
 
 
 #정상도메인이 아주 좋은 최신데이터버전
@@ -229,18 +229,72 @@ df['domain'] = df['domain'].astype(str).str.lower()
 X_raw = df['domain']
 y = df['label']
 
-# 3. ★ 핵심: 문자열 벡터화 (글자를 2~3개씩 쪼개서 수학적 패턴으로 변환)
+# 3. 핵심: 문자열 벡터화 (글자를 2~3개씩 쪼개서 수학적 패턴으로 변환)
 print("문자열 벡터화(N-gram) 진행 중... (시간이 조금 걸립니다)")
 vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2, 3), max_features=5000)
 X_vectorized = vectorizer.fit_transform(X_raw)
 
-# 4. 모델 훈련 (더 정교하게 트리 150개, CPU 코어 풀가동)
-print("벡터화 기반 업그레이드 AI 훈련 시작!")
-model = RandomForestClassifier(n_estimators=150, random_state=42, n_jobs=-1)
-model.fit(X_vectorized, y)
+# 4. 훈련용(80%)과 테스트용(20%) 데이터 분할 (사진의 개념 적용)
+X_train, X_test, y_train, y_test = train_test_split(X_vectorized, y, test_size=0.2, random_state=42)
 
-# 5. 모델과 벡터라이저(번역기) 둘 다 저장
+# 5. 모델 훈련 (X_train과 y_train만 사용)
+print("벡터화 기반 업그레이드 AI 훈련 시작!")
+model = RandomForestClassifier(n_estimators=150, random_state=42, n_jobs=-1) #class_weight={0: 5.0, 1: 1.0},min_samples_leaf=5
+model.fit(X_train, y_train)
+
+print("평가지표(성적표) 계산 중...")
+# 6. 테스트용 데이터(X_test)로 시험을 쳐서 예측값(y_pred) 추출 , 혼동 행렬(Confusion Matrix) 계산: TP, TN, FP, FN 분리
+y_pred = model.predict(X_test)
+tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
+
+# 7. 평가지표 계산 및 딕셔너리화
+metrics_file = 'model/model_metrics.json'
+history = []
+
+# 7-1. 기존 성적표 파일이 존재하면 읽어오기
+if os.path.exists(metrics_file):
+    with open(metrics_file, 'r', encoding='utf-8') as f:
+        try:
+            history = json.load(f)
+        except json.JSONDecodeError:
+            history = []
+
+# 7-2. 새 버전 번호 자동 생성 (기존 기록 개수 기준, 예: v1.0, v1.1...)
+new_version = f"v1.{len(history)}"
+
+# 7-3. 이번 훈련의 최종 성적표 딕셔너리 생성
+current_metrics = {
+    "version": new_version,
+    "model_type": "기초 버전 RandomForest + N-gram",
+    "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    "hyperparameters": {
+        "n_estimators": 150,                # 방금 적용한 트리 개수 적어두기
+        "max_features": 5000,               # 방금 적용한 단어장 크기 적어두기
+        # "class_weight": "0: 5.0, 1: 1.0",   # 페널티 수치 적어두기
+        # "min_samples_leaf": 5               # 꼬투리 잡기 방지 수치 적어두기
+    },
+    "confusion_matrix": {
+        "TP": int(tp),
+        "TN": int(tn),
+        "FP": int(fp),
+        "FN": int(fn)
+    },
+    "scores": {
+        "accuracy": round(accuracy_score(y_test, y_pred) * 100, 2),
+        "precision": round(precision_score(y_test, y_pred) * 100, 2),
+        "recall": round(recall_score(y_test, y_pred) * 100, 2),
+        "f1_score": round(f1_score(y_test, y_pred) * 100, 2)
+    }
+}
+
+# 7-4. 리스트에 방금 친 시험 성적을 추가하고 파일로 덮어쓰기
+history.append(current_metrics)
+with open(metrics_file, 'w', encoding='utf-8') as f:
+  json.dump(history, f, ensure_ascii=False, indent=4)
+
+# 8. 기존처럼 모델과 벡터라이저 저장
 joblib.dump(model, 'model/dga_model_vec.pkl')
 joblib.dump(vectorizer, 'model/vectorizer.pkl')
 
-print(f"훈련 완료! 뇌(model)와 번역기(vectorizer) 생성됨 (소요 시간: {time.time() - start_time:.2f}초)")
+print(f"훈련 및 평가 완료! 평가지표가 'model_metrics.json'에 저장되었습니다. (소요 시간: {time.time() - start_time:.2f}초)")
+

@@ -17,8 +17,6 @@ pcap_t *handle = NULL;  // 추후에 그냥 여기쓸거 구조체변수를 전�
                         // 지금 devices[0].handle를 시그널함수에 가져다 못쓰기때문에(main함수에서
                         // 구조체변수로만들어진놈이라 stack영역으로 지역변수임)
 uint8_t latest_mac_cache[256][6] = {0};
-BlackListInfo check_manager;
-LogPacket log_date = {0};
 SharedLogQueue log_queue = {0};
 AIQueue ai_queue = {0};
 
@@ -50,31 +48,10 @@ void handle_sigint(int sig) {
 
 int main(void) {
 
-  // 블랙리스트 구조체 전역변수 초기화구문
-  for (int i = 0; i < MAX_BLACKLIST_COUNT; i++)
-    check_manager.target_url[i] = NULL;
-  check_manager.count = 0;
-  pthread_mutex_init(&check_manager.lock, NULL);
-
-  load_blacklist();
-
   //ai 큐 뮤텍스/조건변수 초기화
   pthread_mutex_init(&ai_queue.lock, NULL);
   pthread_cond_init(&ai_queue.cond, NULL);
 
-  // 1. 방패 깎기 (메모리에 10만 개짜리 빈 방 만들기)
-  black_manager.shield_A = create_hash_table();
-  black_manager.shield_B = create_hash_table(); // 예비용으로 미리 만들어 둠
-
-  
-
-  // 2. 초기 실탄 장전 (처음엔 A 방패에 몰아서 넣기)
-  load_domains_from_txt(black_manager.shield_A, "/tmp/blacklist.txt",LOG_MANUAL_BLOCK);    // 수동 데이터
-  load_domains_from_txt(black_manager.shield_A, "/tmp/ai_blacklist.txt",LOG_AI_BLOCK); // AI 차단 데이터
-
-  // pcap시작시 사용할 메인 방메(시작할 해시테이블)
-  black_manager.active_shield = black_manager.shield_A;
-  white_manager.active_shield = create_hash_table(); //잠깐 예비 테스트용
 
   signal(SIGINT, handle_sigint); // 컨트롤 C 용 시그널
   signal(SIGTERM,
@@ -82,8 +59,8 @@ int main(void) {
 
   char errbuf[PCAP_ERRBUF_SIZE];
   struct bpf_program filter;
-  char filter_exp[] = "src net 192.168.2.0 mask 255.255.255.0 and tcp "
-                      "dst port 80 and dst host not 192.168.3.243";
+  char filter_exp[] = "src net 192.168.2.0 mask 255.255.255.0 and"
+                      "(tcp dst port 80 or udp dst port 53) and dst host not 192.168.3.243";
 
   pcap_if_t *alldevs, *target;
   Device devices[3] = {
@@ -120,6 +97,7 @@ int main(void) {
     target = target->next;
   }
 
+
   target = target->next;
   printf("mirror(캡쳐용) Device : %s\n", devices[0].dev->name);
   printf("Inject(인젝션용) Device  : %s\n", devices[2].dev->name);
@@ -145,6 +123,25 @@ int main(void) {
       "/root/Captive_Web/venv/bin/python "
       "/root/intranet-access-controller/sungkwang-pcap/sync_runner.py"); // 가상환경의
                                                                          // 파이썬에서
+
+// 1. 방패 깎기 (메모리에 10만 개짜리 빈 방 만들기)
+  black_manager.shield_A = create_hash_table();
+  black_manager.shield_B = create_hash_table(); // 예비용으로 미리 만들어 둠
+
+  white_manager.shield_A = create_hash_table();
+  white_manager.shield_B = create_hash_table();
+
+
+  // 2. 초기 실탄 장전 (처음엔 A 방패에 몰아서 넣기)
+  load_domains_from_txt(black_manager.shield_A, "/temp/ai_blacklist.txt",LOG_AI_BLOCK); //ai훈련용 악성데이터 10만개
+  // load_domains_from_txt(black_manager.shield_A, "/tmp/blacklist.txt",LOG_MANUAL_BLOCK);    // 수동 데이터(여기서 다 관리)
+
+  load_domains_from_txt(white_manager.shield_A, "/tmp/ai_whitelist.txt",LOG_PASS); // 기존ai훈련용 정상데이터 10만개
+  // load_domains_from_txt(white_manager.shield_A, "/tmp/whitelist.txt",LOG_MANUAL_PASS); // 수동데이터
+
+  // pcap시작시 사용할 메인 방메(시작할 해시테이블)
+  black_manager.active_shield = black_manager.shield_A;
+  white_manager.active_shield = white_manager.shield_A; 
 
   // 동기화가 완전히 끝난 후 아래코드들 진행
   printf("[시스템] 동기화 완료! PCAP 패킷 감시를 시작합니다.\n");
@@ -223,6 +220,14 @@ int main(void) {
   if (black_manager.shield_B != NULL) {
     free_hash_table(black_manager.shield_B);
   }
+
+  if (white_manager.shield_A != NULL) { //메모리해제는 마지막
+    free_hash_table(white_manager.shield_A); 
+  }
+  if (white_manager.shield_B != NULL) {
+    free_hash_table(white_manager.shield_B);
+  }
+
   printf("loop 이후 자원반납 깔끔하게 싹 하고 return 0 됨\n");
 
   return 0;
