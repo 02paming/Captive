@@ -619,3 +619,70 @@ CREATE TABLE IF NOT EXISTS `AI_whitelist_addr` (
 
 -- 외래 키 체크 복구
 SET FOREIGN_KEY_CHECKS = 1;
+
+
+-- 261029
+-- 로그 테이블 통합 및 블랙/화이트리스트 구조 개편
+
+USE internal_db;
+
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- 1. dga_detection_log 테이블 삭제
+DROP TABLE IF EXISTS `dga_detection_log`;
+
+-- 2. 기존 로그 테이블 삭제 (블랙리스트 로그 및 정상 접근 로그 통합 준비)
+DROP TABLE IF EXISTS `blacklist_addr_access_log`;
+DROP TABLE IF EXISTS `web_access_log`;
+
+-- 3. 통합된 웹 접근 로그 테이블 생성
+-- 특정 도메인 테이블을 참조하는 외래키를 제거하고, access_flag 컬럼으로 정상/블랙 접근을 구분합니다.
+CREATE TABLE `web_access_log` (
+    `web_access_log_id` INT NOT NULL AUTO_INCREMENT COMMENT '통합 웹 접근 로그 id',
+    `online_list_log_id` INT NOT NULL COMMENT 'online_list_log 참조',
+    `target_url` VARCHAR(255) NOT NULL COMMENT '접근한 도메인/URL',
+    `access_flag` VARCHAR(50) NOT NULL COMMENT '접근 상태 분류 (예: 정상, 블랙리스트 등)',
+    `ai_score` DOUBLE DEFAULT -1 COMMENT 'AI 차단 시 위험도 점수 (해당 없으면 -1)',
+    `access_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '접근 시간(5년 보관 후 자동 삭제)',
+    PRIMARY KEY (`web_access_log_id`),
+    FOREIGN KEY (`online_list_log_id`) REFERENCES `online_list_log`(`online_list_log_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 4. 관리자 수동 블랙/화이트 테이블명 변경 및 source 필드 추가
+-- user_ 접두사를 제거하고 3가지 경우(수동, ai, 의심)를 구분할 source 컬럼을 추가합니다.
+RENAME TABLE `user_blacklist_addr` TO `blacklist_addr`;
+RENAME TABLE `user_whitelist_addr` TO `whitelist_addr`;
+
+ALTER TABLE `blacklist_addr`
+    CHANGE COLUMN `user_blacklist_id` `blacklist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    ADD COLUMN `source` VARCHAR(50) NOT NULL DEFAULT 'USER' COMMENT '출처 구분 (수동, ai, 의심)';
+
+ALTER TABLE `whitelist_addr`
+    CHANGE COLUMN `user_whitelist_id` `whitelist_id` INT NOT NULL AUTO_INCREMENT COMMENT '현재 테이블 id',
+    ADD COLUMN `source` VARCHAR(50) NOT NULL DEFAULT 'USER' COMMENT '출처 구분 (수동, ai, 의심)';
+
+-- 5. 기존 AI 화이트, AI 블랙 테이블 제거
+DROP TABLE IF EXISTS `AI_blacklist_addr`;
+DROP TABLE IF EXISTS `AI_whitelist_addr`;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+
+-- 6. [필수 반영] 자동 삭제 스케줄러 업데이트
+-- 삭제된 테이블(dga_detection_log, blacklist_addr_access_log)이 스케줄러에서 에러를 유발하지 않도록 제외합니다.
+DELIMITER $$
+DROP EVENT IF EXISTS auto_purge_all_tables$$
+CREATE EVENT internal_db.auto_purge_all_tables
+ON SCHEDULE EVERY 1 DAY
+STARTS CURRENT_TIMESTAMP
+COMMENT '가입희망자(1개월) 및 임시삭제/로그 데이터(5년) 매일 자동 영구 삭제'
+DO
+BEGIN
+    DELETE FROM prospective_members WHERE date_of_request <= DATE_SUB(NOW(), INTERVAL 1 MONTH);
+    DELETE FROM blacklist_addr WHERE deleted_at <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+    DELETE FROM whitelist_addr WHERE deleted_at <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+    DELETE FROM online_list_log WHERE login_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+    DELETE FROM web_access_log WHERE access_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+    DELETE FROM online_ip_mac_mismatch_log WHERE insert_time <= DATE_SUB(NOW(), INTERVAL 5 YEAR);
+END$$
+DELIMITER ;
