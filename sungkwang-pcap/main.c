@@ -5,7 +5,6 @@ typedef struct Device {
   pcap_if_t *dev;
   pcap_t *handle;
 } Device;
-pthread_mutex_t shield_lock = PTHREAD_MUTEX_INITIALIZER;
 // 이곳은 전역변수 세팅하는곳으로 시작하자마자 데이터세그먼트영역에
 // 메모리올리는것(extern로 헤더에 다른파일에서도 쓰겠다고 명시되어있음)
 AuthRecord whitelist[256] = {0};
@@ -25,26 +24,29 @@ AIQueue ai_queue = {0};
 DoubleBufferManager black_manager = {0};
 DoubleBufferManager white_manager = {0};
 
-void handle_sigint(int sig) {
-  printf("\n[Main] 종료 신호 감지! 스레드들을 깨웁니다...\n");
-  keep_running = 0; // 깃발 내리기
+  void handle_sigint(int sig) {
+    printf("\n[Main] 종료 신호 감지! 스레드들을 깨웁니다...\n");
+    keep_running = 0; // 깃발 내리기
 
-  // 1. 자고 있는 GC 스레드 강제 기상 (비상벨)
-  pthread_cond_signal(&cond);
+    // 1. 자고 있는 GC 스레드 강제 기상 (비상벨)
+    pthread_cond_signal(&cond);
 
-  // 2 자고있는 AI분석 스레드 강제 기상
-  pthread_cond_signal(&ai_queue.cond);
+    // 2. 자고 있는 LOG 스레드 강제 기상
+    pthread_cond_signal(&log_queue.log_cond);
 
-  // 3. UDS 소켓 대기 깨우기
-  printf("[Main] 시그널 핸들러가 조준 중인 번호: %d\n", server_fd);
-  if (server_fd != -1) {
-    shutdown(server_fd, SHUT_RDWR);
+    // 2 자고있는 AI분석 스레드 8명모두 강제 기상
+    pthread_cond_broadcast(&ai_queue.cond);
+
+    // 3. UDS 소켓 대기 깨우기
+    printf("[Main] 시그널 핸들러가 조준 중인 번호: %d\n", server_fd);
+    if (server_fd != -1) {
+      shutdown(server_fd, SHUT_RDWR);
+    }
+
+    // 4. PCAP 무한루프 깨우기
+    if (handle != NULL)
+      pcap_breakloop(handle);
   }
-
-  // 4. PCAP 무한루프 깨우기
-  if (handle != NULL)
-    pcap_breakloop(handle);
-}
 
 int main(void) {
 
@@ -52,10 +54,25 @@ int main(void) {
   pthread_mutex_init(&ai_queue.lock, NULL);
   pthread_cond_init(&ai_queue.cond, NULL);
 
+  //log 큐 뮤텍스/조건변수 초기화
+  pthread_mutex_init(&log_queue.queue_lock, NULL);
+  pthread_cond_init(&log_queue.log_cond, NULL);
+  
+  //기본(인증) 아직 전역인 뮤텍스/조건변수 초기화
+  if (pthread_mutex_init(&lock, NULL) != 0) {
+    fprintf(stderr, "뮤텍스 초기화 실패\n");
+    return 1;
+  }
+
+
+  pthread_condattr_t attr;
+  pthread_condattr_init(&attr);
+  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+  pthread_cond_init(&cond, &attr);
+  pthread_condattr_destroy(&attr);
 
   signal(SIGINT, handle_sigint); // 컨트롤 C 용 시그널
-  signal(SIGTERM,
-         handle_sigint); // 서버 재부팅, os업데이트,서비스재시작용 시그널
+  signal(SIGTERM, handle_sigint); // 서버 재부팅, os업데이트,서비스재시작용 시그널
 
   char errbuf[PCAP_ERRBUF_SIZE];
   struct bpf_program filter;
@@ -63,15 +80,7 @@ int main(void) {
                       "(tcp dst port 80 or udp dst port 53) and dst host not 192.168.3.243";
 
   pcap_if_t *alldevs, *target;
-  Device devices[3] = {
-      0,
-  };
-
-  // 뮤텍스 초기화
-  if (pthread_mutex_init(&lock, NULL) != 0) {
-    fprintf(stderr, "뮤텍스 초기화 실패\n");
-    return 1;
-  }
+  Device devices[3] = {0,};
 
   // 1. 전체 디바이스 목록 검색 (alldevs에는 다 이시점에서 들어감 순회로)
   if (pcap_findalldevs(&alldevs, errbuf) == -1 || alldevs == NULL) {
@@ -102,14 +111,12 @@ int main(void) {
   printf("mirror(캡쳐용) Device : %s\n", devices[0].dev->name);
   printf("Inject(인젝션용) Device  : %s\n", devices[2].dev->name);
 
-  pthread_condattr_t attr;
-  pthread_condattr_init(&attr);
-  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
-  pthread_cond_init(&cond, &attr);
-  pthread_condattr_destroy(&attr);
 
   // 3.5 UDS 수신 대기하는 스레드 생성
-  pthread_t uds_tid, clean_tid,ai_thread_tid;
+  pthread_t uds_tid, clean_tid, ai_thread_tid, log_tid;
+  pthread_t ai_threads[AI_WORKERS];
+  int worker_ids[AI_WORKERS];
+
   if (pthread_create(&uds_tid, NULL, uds_server_thread, NULL) != 0) {
     fprintf(stderr, "UDS 스레드 생성 실패\n");
     return 1;
@@ -133,11 +140,13 @@ int main(void) {
 
 
   // 2. 초기 실탄 장전 (처음엔 A 방패에 몰아서 넣기)
-  load_domains_from_txt(black_manager.shield_A, "/temp/ai_blacklist.txt",LOG_AI_BLOCK); //ai훈련용 악성데이터 10만개
-  // load_domains_from_txt(black_manager.shield_A, "/tmp/blacklist.txt",LOG_MANUAL_BLOCK);    // 수동 데이터(여기서 다 관리)
+  load_domains_from_txt(black_manager.shield_A, "/tmp/ai_blacklist.txt",LOG_AI_BLOCK,-1);
+  load_domains_from_txt(black_manager.shield_B, "/tmp/ai_blacklist.txt",LOG_AI_BLOCK,-1); //ai훈련용 악성데이터 10만개
+  
 
-  load_domains_from_txt(white_manager.shield_A, "/tmp/ai_whitelist.txt",LOG_PASS); // 기존ai훈련용 정상데이터 10만개
-  // load_domains_from_txt(white_manager.shield_A, "/tmp/whitelist.txt",LOG_MANUAL_PASS); // 수동데이터
+  load_domains_from_txt(white_manager.shield_A, "/tmp/ai_whitelist.txt",LOG_AI_PASS,-1);
+  load_domains_from_txt(white_manager.shield_B, "/tmp/ai_whitelist.txt",LOG_AI_PASS,-1); 
+  
 
   // pcap시작시 사용할 메인 방메(시작할 해시테이블)
   black_manager.active_shield = black_manager.shield_A;
@@ -151,17 +160,24 @@ int main(void) {
     return 1;
   }
 
-  if (pthread_create(&ai_thread_tid, NULL, ai_worker_thread, NULL) != 0){
-    fprintf(stderr, "ai분석 스레드 생성 실패\n");
+  if (pthread_create(&log_tid, NULL, log_thread, NULL) != 0) {
+    fprintf(stderr, "log 스레드 생성 실패\n");
     return 1;
   }
 
+  for (int i = 0; i < AI_WORKERS; i++) {
+    worker_ids[i] = i + 1;
+    // 스레드 생성 (워커 함수와 이름표를 넘겨줌)
+    if (pthread_create(&ai_threads[i], NULL, ai_worker_thread, &worker_ids[i]) != 0) {
+      perror("[에러] AI 워커 스레드 생성 실패");
+      return 1;
+    }
+    printf("[Main] AI 워커 스레드 %d번 대기조 편성 완료\n", worker_ids[i]);
+  }
+
   // 4. 배열을 활용한 지정한 디바이스를통한 핸들세션 열기
-  devices[0].handle =
-      pcap_open_live(devices[0].dev->name, BUFSIZ, 1, 1,
-                     errbuf); // rx (Promisc) 패킷을 들어오게끔만
-  devices[2].handle = pcap_open_live(devices[2].dev->name, BUFSIZ, 0, 0,
-                                     errbuf); // tx 패킷이 나가게만
+  devices[0].handle = pcap_open_live(devices[0].dev->name, BUFSIZ, 1, 1, errbuf); // rx (Promisc) 패킷을 들어오게끔만
+  devices[2].handle = pcap_open_live(devices[2].dev->name, BUFSIZ, 0, 0, errbuf); // tx 패킷이 나가게만
 
   if (devices[0].handle == NULL || devices[2].handle == NULL) {
     fprintf(stderr, "Couldn't open devices.\n");
@@ -169,16 +185,14 @@ int main(void) {
     return 1;
   }
 
-  handle =
-      devices[0].handle; // pcap_loop 핸들 전역변수에 쓰기 (pcap_loop 부수는용)
+  handle = devices[0].handle; // pcap_loop 핸들 전역변수에 쓰기 (pcap_loop 부수는용)
 
   pcap_setdirection(devices[0].handle, PCAP_D_IN);  // rx
   pcap_setdirection(devices[2].handle, PCAP_D_OUT); // tx
 
   // 5. 캡처 디바이스의 데이터링크 검증
   if (pcap_datalink(devices[0].handle) != DLT_EN10MB) {
-    fprintf(stderr, "Error: Device %s 은 이더넷이 아닙니다!\n",
-            devices[0].dev->name);
+    fprintf(stderr, "Error: Device %s 은 이더넷이 아닙니다!\n", devices[0].dev->name);
     pcap_close(devices[0].handle);
     pcap_close(devices[2].handle);
     pcap_freealldevs(alldevs);
@@ -203,7 +217,12 @@ int main(void) {
   pcap_close(devices[0].handle);
   pcap_close(devices[2].handle);
 
-  pthread_join(ai_thread_tid,NULL);
+
+  
+  pthread_join(log_tid,NULL);
+  for (int i = 0; i < AI_WORKERS; i++) {
+    pthread_join(ai_threads[i], NULL);
+  }
   pthread_join(clean_tid, NULL);
   pthread_join(uds_tid, NULL); // 실제로 종료될때까지 현재 스레드가 대기, 과거 좀비프로세스 마냥 // 이 과정이없으면 스레드가 좀비로 남아있을수있음
 
@@ -211,6 +230,12 @@ int main(void) {
 
   pthread_mutex_destroy(&lock);
   pthread_cond_destroy(&cond);
+
+  pthread_mutex_destroy(&ai_queue.lock);
+  pthread_cond_destroy(&ai_queue.cond);
+
+  pthread_mutex_destroy(&log_queue.queue_lock);
+  pthread_cond_destroy(&log_queue.log_cond);
 
   pcap_freealldevs(alldevs);
 

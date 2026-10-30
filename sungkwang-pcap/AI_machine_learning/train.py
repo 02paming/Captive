@@ -3,11 +3,13 @@ import joblib
 import time
 import os
 import json
+import urllib.request
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
 
+API_AI_METRICS_UPDATE = "http://192.168.3.23:8080/api/ai_metrics_update"
 
 
 #정상도메인이 아주 좋은 최신데이터버전
@@ -293,8 +295,27 @@ with open(metrics_file, 'w', encoding='utf-8') as f:
   json.dump(history, f, ensure_ascii=False, indent=4)
 
 # 8. 기존처럼 모델과 벡터라이저 저장
-joblib.dump(model, 'model/dga_model_vec.pkl')
-joblib.dump(vectorizer, 'model/vectorizer.pkl')
+model_filename = f'model/dga_model_vec_{new_version}.pkl'
+vec_filename = f'model/vectorizer_{new_version}.pkl'
+joblib.dump(model, model_filename)
+joblib.dump(vectorizer, vec_filename)
 
-print(f"훈련 및 평가 완료! 평가지표가 'model_metrics.json'에 저장되었습니다. (소요 시간: {time.time() - start_time:.2f}초)")
+print(f"💾 모델 저장 완료: {model_filename}, {vec_filename}")
+
+# 9. [신규] 멍텅구리 서버(8080)로 성적표 JSON HTTP POST 전송
+print("📡 멍텅구리 서버(8080)로 훈련 성적표 전송 중...")
+try:
+    payload = json.dumps(current_metrics).encode('utf-8')
+    req = urllib.request.Request(
+        API_AI_METRICS_UPDATE, 
+        data=payload,
+        headers={'Content-Type': 'application/json'},
+        method="POST"
+    )
+    urllib.request.urlopen(req, timeout=3)
+    print("[DB 연동 완료] 멍텅구리 서버로 성적표 전송 성공!")
+except Exception as e:
+    print(f"[DB 연동 실패] 멍텅구리 서버 연결 오류 (서버가 켜져 있는지 확인): {e}")
+
+print(f"모든 작업이 끝났습니다! (총 소요 시간: {time.time() - start_time:.2f}초)")
 

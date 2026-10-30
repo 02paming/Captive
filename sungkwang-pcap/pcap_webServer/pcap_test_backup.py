@@ -11,7 +11,7 @@ app = Flask(__name__)
 SOCKET_PATH = "/tmp/authrized_ip"
 
 # 파이썬 uds서버 스레드가 열어두고 대기하는 uds 소켓파일 경로
-GC_SOCKET_PATH = "/tmp/pcap_gc.sock"
+GC_LOG_SOCKET_PATH = "/tmp/pcap_gc.sock"
 
 # [NEW] 웹서버+백엔드 PC(192.168.3.23)의 인증 검증 API 주소
 API_SERVER_URL = "http://192.168.3.23:8080/api/verify"
@@ -30,7 +30,7 @@ API_BLACKLIST_LOG = "http://192.168.3.23:8080/api/blacklist_log"
 API_WEB_ACCESS_LOG = "http://192.168.3.23:8080/api/web_access_log"
 
 # 추가 AI가 감지한 블랙리스트 추가
-API_AI_BLACKLIST_INSERT = "http://192.168.3.23:8080/api/ai_block"
+# API_AI_BLACKLIST_INSERT = "http://192.168.3.23:8080/api/ai_block"
 
 
 
@@ -56,20 +56,21 @@ def blocked_site():
 
   # print(" [디버깅] 들어온 args 전체:", dict(request.args))
   # get이 객체의 키값꺼내는것 아래에도 자주쓰였음 지금은 쿼리스트링 키값가져옴 args에서
-  blocked_url = request.args.get("url")
-  client_ip = request.args.get("ip")
-  host_id = client_ip.split(".")[-1]
 
-  if blocked_url and client_ip:
-    payload = {
-        "blacklist_domain": blocked_url,
-        "user_online_ip": host_id
-    }
-    try:
-      res = requests.post(API_BLACKLIST_LOG, json=payload, timeout=2)
-      print(f" PCAP 백엔드로 전달 성공 (상태코드: {res.status_code})")
-    except Exception as e:
-      print(f" PCAP 백엔드 통신 실패: {e}")
+  # blocked_url = request.args.get("url")
+  # client_ip = request.args.get("ip")
+  # host_id = client_ip.split(".")[-1]
+
+  # if blocked_url and client_ip:
+  #   payload = {
+  #       "blacklist_domain": blocked_url,
+  #       "user_online_ip": host_id
+  #   }
+  #   try:
+  #     res = requests.post(API_BLACKLIST_LOG, json=payload, timeout=2)
+  #     print(f" PCAP 백엔드로 전달 성공 (상태코드: {res.status_code})")
+  #   except Exception as e:
+  #     print(f" PCAP 백엔드 통신 실패: {e}")
 
   return render_template("blocked_page.html")
 
@@ -240,16 +241,16 @@ def send_host_id_via_uds(command, auth_payload):
 # 추가 인증초기화 usd 서버 역할의 함수 (백엔드로쏴서 인증테이블 db 행 삭제용(혹은 status 업데이트로갈건지 추후 상의))
 def gc_uds_server():
   # 여기 웹서버 프로세스 재시작할때 기존에 쓰던 GC_SOCKET_PATH의 파일이 남아있으면 bind()때 이미사용중이라고 에러발생 대비
-  if os.path.exists(GC_SOCKET_PATH):
-    os.remove(GC_SOCKET_PATH)  # exits()로 진짜있는지 확인후 있다면 remove
+  if os.path.exists(GC_LOG_SOCKET_PATH):
+    os.remove(GC_LOG_SOCKET_PATH)  # exits()로 진짜있는지 확인후 있다면 remove
     # 파일의 권한,삭제,조회등 os의 커널명령을 직접내리려면 import os가 필요 그래서 쓰는중
 
   server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-  server.bind(GC_SOCKET_PATH)
+  server.bind(GC_LOG_SOCKET_PATH)
   server.listen(5)
   # os.chmod(GC_SOCKET_PATH, 0o666) 클라 , 서버 둘다 root 이기때문에 굳이 필요없음
 
-  print(f"[UDS 서버] C 프로그램(GC) 통보 대기 중... ({GC_SOCKET_PATH})")
+  print(f"[UDS 서버] C 프로그램(GC,LOG) 통보 대기 중... ({GC_LOG_SOCKET_PATH})")
 
   while True:
     conn, _ = server.accept()  # 소켓fd와 , 주소 튜플로반환
@@ -288,16 +289,17 @@ def handle_uds_client(conn):
 
       # 일반 log일때(인증된사원 일반접속로그)
       # ["LOG",55,"ccc.com"]
-      elif command == "LOG" and len(parts) >= 3:
-
-        # 지금 여기서 parts[1]은 ip 풀 192.168.2.55 상태일거임 이걸 55로보내야함
+      elif command == "WHITE" and len(parts) >= 5:
         client_ip = parts[1]
         target_url = parts[2]
-
+        status_code = parts[3].strip() # 2(수동정상), 5(AI의심정상), 6(AI정상)
+        ai_score = parts[4].strip()
+        
         data = {
             "client_ip": client_ip.split(".")[-1],
-            #  "client_mac" : client_mac, 맥은 안보내고 ip로만 제어가능 db에서 조인으로 써먹을수있음
-            "target_url": target_url
+            "status_code": status_code, 
+            "target_url": target_url,
+            "ai_score": ai_score
         }
         print(data)
         print(f"[UDS 수신] 웹 접속 로그 -> {client_ip} ({target_url})")
@@ -310,22 +312,25 @@ def handle_uds_client(conn):
         except Exception as e:
           print(f"[API 전달 실패] 로그 저장 오류: {e}")
 
-      elif command == "AI" and len(parts) >= 3:
+      elif command == "BLACK" and len(parts) >= 5:
         client_ip = parts[1]
         target_url = parts[2]
+        status_code = parts[3].strip() # 1(수동차단), 3(AI차단), 4(AI의심차단)
+        ai_score = parts[4].strip()
         
-        # 1. 백엔드로 보낼 JSON 데이터 세팅
         data = {
             "client_ip": client_ip.split(".")[-1],
-            "target_url": target_url
+            "status_code": status_code, # 숫자 코드 그대로 토스
+            "target_url": target_url,
+            "ai_score": ai_score
         }
         
-        print(f"\n[UDS 수신] AI 자동 차단 (DB 업데이트 요청) -> IP: {client_ip} / 도메인: {target_url}")
+        print(f"\n[UDS 수신] 블랙 접속 로그 (DB 업데이트 요청) -> IP: {client_ip} / 도메인: {target_url}")
         
         # 2. 파일 쓰기 대신 백엔드의 /api/ai_block API로 POST 전송
         try:
             response = requests.post(
-                API_AI_BLACKLIST_INSERT, 
+                API_BLACKLIST_LOG, 
                 json=data,
                 timeout=3
             )

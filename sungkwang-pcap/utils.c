@@ -24,69 +24,45 @@ unsigned short csum(unsigned short *ptr, int nbytes)
 }
 
 void uds_client_sock(const int ip){
+  char msg[64];
+  sprintf(msg, "GC|%d", ip);
 
-    int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (sockfd < 0) {
-            perror("UDS 소켓 생성 실패");
-            return;
-        }
-
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, GC_SOCKET_PATH, sizeof(addr.sun_path) - 1);
-
-    // printf("잘 날아갔나? 1\n");
-    // 파이썬 서버로 연결 시도 (안 켜져 있으면 에러 반환하고 무시함)
-    if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-        char msg[32];
-        sprintf(msg, "GC|%d", ip); // 예: "50"
-        
-        // 차단된 Host ID 전송 후 즉시 연결 종료
-        write(sockfd, msg, strlen(msg)); //순수 50크기만 쏨 널제외
-        // printf("잘 날아갔나? 2\n");
-    }else{
-        perror("[UDS 클라이언트 에러] 파이썬 GC 소켓 연결 실패");
-    }
-
-    close(sockfd); // 클라이언트 소켓은 다 쓰면 닫아버림
-
-    return;
+  send_to_uds(msg);
 }
 
 void uds_client_sock_log(const LogPacket* local_log){
+  char msg[512];
 
+  
+
+  if(local_log->is_ai_blocked == 1 || local_log->is_ai_blocked == 3 || local_log->is_ai_blocked == 4) {
+    sprintf(msg, "BLACK|%s|%s|%d|%.2f", local_log->client_ip, local_log->target_host, local_log->is_ai_blocked,local_log->ai_score);
+  }
+  else if(local_log->is_ai_blocked == 2 || local_log->is_ai_blocked == 5 || local_log->is_ai_blocked == 6) {
+    sprintf(msg, "WHITE|%s|%s|%d|%.2f", local_log->client_ip, local_log->target_host, local_log->is_ai_blocked,local_log->ai_score);
+  }
+
+  send_to_uds(msg);
+}
+
+void send_to_uds(const char* message) {
     int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (sockfd < 0) {
-            perror("UDS 소켓 생성 실패");
-            return;
-        }
+    if (sockfd < 0) {
+        perror("[UDS] 소켓 생성 실패");
+        return;
+    }
 
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, GC_SOCKET_PATH, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, GC_LOG_SOCKET_PATH, sizeof(addr.sun_path) - 1); 
 
-    // printf("잘 날아갔나? 1\n");
-    // 파이썬 서버로 연결 시도 (안 켜져 있으면 에러 반환하고 무시함)
-    if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == 0){
-        char msg[256]; // URL이 길 수 있으므로 256 넉넉하게 잡음
-        
-        /// 파이썬 웹서버가 파싱할 수 있게 형태를 분리해서 조립
-        if (local_log->is_ai_blocked == 2) {
-            sprintf(msg, "AI|%s|%s", local_log->client_ip, local_log->target_host);
-        } else {
-            sprintf(msg, "LOG|%s|%s", local_log->client_ip, local_log->target_host);
-        }   
-
-        // 조합된 문자열 한 번에 전송
-        write(sockfd, msg, strlen(msg));
+    if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+        write(sockfd, message, strlen(message));
     } else {
-        perror("[UDS 에러] 웹 로그 파이썬 소켓 연결 실패");
+        perror("[UDS 에러] 멍텅구리 서버 연결 실패 (꺼져있음)");
     }
-    close(sockfd); // 클라이언트 소켓은 다 쓰면 닫아버림
-
-    return;
+    close(sockfd);
 }
 
 int packet_mac_check(const int host_id, const uint8_t* packet_mac){
@@ -129,27 +105,49 @@ int packet_mac_check(const int host_id, const uint8_t* packet_mac){
 
 
 //queue push
-void push_to_log_queue(const char* ip, const char* domain, int is_blocked_flag) {
+void push_to_log_queue(const char* ip, const char* domain, int is_blocked_flag, double score) {
     LogPacket log_data;
     memset(&log_data, 0, sizeof(LogPacket));
     
     strcpy(log_data.client_ip, ip);
     strncpy(log_data.target_host, domain, sizeof(log_data.target_host) - 1);
-    log_data.is_ai_blocked = is_blocked_flag; // 0(정상) 또는 1(AI 차단) 꼬리표 부착
+    log_data.is_ai_blocked = is_blocked_flag; 
+    log_data.ai_score = score;
 
     pthread_mutex_lock(&log_queue.queue_lock);
     if (log_queue.count < MAX_LOG_QUEUE) {
         log_queue.nodes[log_queue.rear] = log_data;
         log_queue.rear = (log_queue.rear + 1) % MAX_LOG_QUEUE;
         log_queue.count++;
-        pthread_cond_signal(&cond); // GC 스레드 기상!
+        pthread_cond_signal(&log_queue.log_cond); // GC 스레드 기상!
     } else {
         printf("[경고] 로그 큐 오버플로우\n"); 
     }
     pthread_mutex_unlock(&log_queue.queue_lock);
 }
 
-//ai분석용queue push
+
+//quque pop
+int pop_log_queue(LogPacket* out_log) {
+    int success = 0;
+    
+    pthread_mutex_lock(&log_queue.queue_lock); // 자물쇠 잠금
+    
+    if (log_queue.count > 0) {
+        *out_log = log_queue.nodes[log_queue.front];
+        log_queue.front = (log_queue.front + 1) % MAX_LOG_QUEUE;
+        log_queue.count--;
+        success = 1; // Pop 성공
+      } else {
+        // printf("[경고] 큐에서 pop할 데이터가 없습니다.\n");
+      }
+      
+      pthread_mutex_unlock(&log_queue.queue_lock); // 자물쇠 해제 (핵심: I/O 전에 미리 품)
+      
+      return success;
+    }
+    
+//ai분석용 queue push
 void push_to_ai_task_queue(const char *domain) {
     pthread_mutex_lock(&ai_queue.lock);
 
@@ -167,36 +165,42 @@ void push_to_ai_task_queue(const char *domain) {
     pthread_mutex_unlock(&ai_queue.lock);
 }
 
-//quque pop
-int pop_log_queue(LogPacket* out_log) {
-    int success = 0;
-    
-    pthread_mutex_lock(&log_queue.queue_lock); // 자물쇠 잠금
-    
-    if (log_queue.count > 0) {
-        *out_log = log_queue.nodes[log_queue.front];
-        log_queue.front = (log_queue.front + 1) % MAX_LOG_QUEUE;
-        log_queue.count--;
-        success = 1; // Pop 성공
-    } else {
-        // printf("[경고] 큐에서 pop할 데이터가 없습니다.\n");
+//ai분석용 queue pop
+int pop_ai_queue(char* out_domain) {
+    pthread_mutex_lock(&ai_queue.lock);
+
+    // 1. 큐가 비어있으면 누군가 깨워줄 때까지 대기
+    while (ai_queue.count == 0 && keep_running) {
+        pthread_cond_wait(&ai_queue.cond, &ai_queue.lock);
     }
-    
-    pthread_mutex_unlock(&log_queue.queue_lock); // 자물쇠 해제 (핵심: I/O 전에 미리 품)
-    
-    return success;
+
+    // 2. 종료 신호를 받았고 처리할 남은 큐도 없다면 락을 풀고 0 반환
+    if (!keep_running && ai_queue.count == 0) {
+        pthread_mutex_unlock(&ai_queue.lock);
+        return 0; 
+    }
+
+    // 3. 큐에서 도메인 데이터 복사 
+    strncpy(out_domain, ai_queue.tasks[ai_queue.front].domain, 127);
+    out_domain[127] = '\0'; 
+
+    // 4. 큐 인덱스 및 카운트 조정
+    ai_queue.front = (ai_queue.front + 1) % MAX_AI_QUEUE; 
+    ai_queue.count--;
+
+    pthread_mutex_unlock(&ai_queue.lock);
+    return 1; // 성공적으로 뺐음
 }
 
-
-// AI에게 도메인을 묻고 결과를 반환 (1 = BLOCK, 0 = PASS)
-int ask_ai_domain_status(const char* domain) {
+// AI에게 도메인을 묻고 결과를 반환 (1 = BLACK, 2 = BLACK_DOUBT, 3 = WHITE_DOUBT , 4 = WHITE)
+int ask_ai_domain_status(const char* domain, double* out_score) {
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock == -1) return 0; // 소켓 생성 실패 시 안전을 위해 PASS 처리 (Fail-Open)
+    if (sock == -1) return LOG_AI_PASS; // 소켓 생성 실패 시 안전을 위해 PASS 처리 (Fail-Open)
 
     // 소켓 타임아웃 설정 (AI 서버가 죽었을 때 C엔진이 멈추는 것 방지, 10ms 한계)
     struct timeval tv;
     tv.tv_sec = 0;
-    tv.tv_usec = 100000; // 10ms (0.01초)
+    tv.tv_usec = 500000; // 10ms (0.01초)
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 
@@ -208,24 +212,40 @@ int ask_ai_domain_status(const char* domain) {
     // 1. AI 서버에 연결
     if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
         close(sock);
-        return 0; // 연결 실패 시 일단 통과시킴 (망 마비 방지)
+        return LOG_AI_PASS; // 연결 실패 시 일단 통과시킴 (망 마비 방지)
     }
 
     // 2. 도메인 전송
-    send(sock, domain, strlen(domain), 0);
+    write(sock, domain, strlen(domain));
 
-    // 3. AI 판독 결과 수신
-    char buffer[16] = {0};
-    int bytes_received = recv(sock, buffer, sizeof(buffer) - 1, 0);
+    // 3. 결과 수신 대기 (수십 ms 블로킹)
+    char buffer[256];
+    int n = read(sock, buffer, sizeof(buffer) - 1);
     close(sock);
 
-    if (bytes_received > 0) {
-        if (strncmp(buffer, "BLOCK", 5) == 0) {
-            return 1; // 악성 도메인!
+    if (n > 0) {
+        buffer[n] = '\0'; // 예: "BLOCK|85.50" 수신 완료
+
+        // 4. 파이프(|) 기준으로 문자열 쪼개기 (Parsing)
+        char* status_str = strtok(buffer, "|"); // 첫 번째 조각 "BLOCK"
+        char* score_str = strtok(NULL, "|");    // 두 번째 조각 "85.50"
+
+        // 5. 점수를 실수(double)로 변환해서 포인터에 저장
+        if (score_str != NULL) {
+            *out_score = atof(score_str);
+        }
+
+        // 6. 문자열 상태를 비교하여 pcap_project.h 에 정의한 정수형 상태값 리턴
+        if (status_str != NULL) {
+            if (strcmp(status_str, "BLOCK") == 0)      return LOG_AI_BLOCK;
+            if (strcmp(status_str, "SUSPICIOUS") == 0) return LOG_AI_DOUBT_BLOCK;
+            if (strcmp(status_str, "GREYLIST") == 0)   return LOG_AI_DOUBT_PASS;
+            if (strcmp(status_str, "PASS") == 0)       return LOG_AI_PASS;
         }
     }
-    
-    return 0; // 정상 도메인이거나 응답이 이상할 경우 PASS
+
+    // 수신 데이터가 깨졌거나 이상할 경우 기본값(통과)
+    return LOG_AI_PASS;
 }
 
 
@@ -246,14 +266,15 @@ HashTable* create_hash_table() {
     for (int i = 0; i < HASH_SIZE; i++) {
         ht->table[i] = NULL; // 처음에 모든 방은 비워둠
     }
+    pthread_mutex_init(&ht->shield_lock, NULL);
     return ht;
 }
 
 // 3. 도메인 쑤셔넣기 (AI가 차단했거나, 처음 txt 파일 읽어올 때)
-void insert_hash_table(HashTable *ht, const char *domain, int block_type) {
+void insert_hash_table(HashTable *ht, const char *domain, int block_type, double score) {
     if (!ht || !domain) return;
     
-    // pthread_mutex_lock(&shield_lock);
+    pthread_mutex_lock(&ht->shield_lock);
 
     unsigned long index = hash_djb2(domain); // 방 번호 찾기 (0초컷)
     
@@ -262,8 +283,9 @@ void insert_hash_table(HashTable *ht, const char *domain, int block_type) {
     while (current != NULL) {
         if (strcmp(current->domain, domain) == 0) {
             current->block_type = block_type; // 상태 덮어쓰기!
+            current->ai_score = score;
 
-            // pthread_mutex_unlock(&shield_lock);
+    pthread_mutex_unlock(&ht->shield_lock);
             return; 
         }
         current = current->next;
@@ -276,15 +298,19 @@ void insert_hash_table(HashTable *ht, const char *domain, int block_type) {
     
 
     new_node->block_type = block_type;
+    new_node->ai_score = score;
+
     new_node->next = ht->table[index];
     ht->table[index] = new_node;
 
-    // pthread_mutex_unlock(&shield_lock);
+    pthread_mutex_unlock(&ht->shield_lock);
 }
 
 // 4. 특정도메인(노드) 찾아서 삭제
 int delete_from_hash_table(HashTable *ht, const char *domain) {
     if (!ht || !domain) return 0; // 실패(삭제할 내용 없음)
+
+    // pthread_mutex_lock(&ht->shield_lock);
 
     unsigned long index = hash_djb2(domain); // 삭제할 방 번호 찾기
     HashNode *current = ht->table[index];
@@ -307,12 +333,11 @@ int delete_from_hash_table(HashTable *ht, const char *domain) {
             // 2. 메모리 해제 (C언어 메모리 누수 방지)
             // (※ 주의: insert 하실 때 domain을 strdup나 malloc으로 동적 할당하셨다면
             // 여기서 free(current->domain); 도 반드시 해주셔야 합니다.)
-            if (current->domain) free(current->domain); 
             free(current); // 노드 자체를 메모리에서 완전히 날림
 
             // 3. 카운트 차감 (ht->count 가 있다면 추가)
             // ht->count--; 
-
+            // pthread_mutex_unlock(&ht->shield_lock);
             return 1; // 삭제 성공! (true)
         }
         
@@ -321,6 +346,7 @@ int delete_from_hash_table(HashTable *ht, const char *domain) {
         current = current->next;
     }
 
+    // pthread_mutex_unlock(&ht->shield_lock);
     return 0; // 해당 도메인이 방패에 없음 (false)
 }
 
@@ -370,7 +396,7 @@ void free_hash_table(HashTable *ht) {
 }
 
 // txt 파일을 한 줄씩 읽어서 방패에 무자비하게 꽂아 넣는 함수
-void load_domains_from_txt(HashTable *ht, const char *filepath,int block_type) {
+void load_domains_from_txt(HashTable *ht, const char *filepath,int block_type, double score) {
     if (!ht || !filepath) return;
 
     FILE *file = fopen(filepath, "r");
@@ -391,7 +417,7 @@ void load_domains_from_txt(HashTable *ht, const char *filepath,int block_type) {
         if (strlen(line) == 0) continue; 
         
         // 해시 테이블에 0초 컷 인서트
-        insert_hash_table(ht, line,block_type);
+        insert_hash_table(ht, line,block_type,score);
         count++;
     }
     

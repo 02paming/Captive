@@ -70,7 +70,7 @@ void *uds_server_thread(void *arg) {
 
             // 2. 쉬고 있는 방패에 도메인 1개 추가 또는 삭제 (락 없음!)
             if (is_add) {
-                insert_hash_table(standby_shield, domain, log_type);
+                insert_hash_table(standby_shield, domain, log_type, -1);
             } else {
                 delete_from_hash_table(standby_shield, domain); 
             }
@@ -82,7 +82,7 @@ void *uds_server_thread(void *arg) {
             HashTable *old_active_shield = (standby_shield == target_manager->shield_A) ? target_manager->shield_B : target_manager->shield_A;
 
             if (is_add) {
-                insert_hash_table(old_active_shield, domain, log_type);
+                insert_hash_table(old_active_shield, domain, log_type, -1);
             } else {
                 delete_from_hash_table(old_active_shield, domain);
             }

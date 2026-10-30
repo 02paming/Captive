@@ -116,27 +116,27 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
     }
 
     // [2계급 절대 차단] 관리자 수동 차단이거나 AI가 확정 차단한 도메인인가?
-    if (black_node != NULL && (black_node->block_type == LOG_MANUAL_BLOCK || black_node->block_type == LOG_AI_BLOCK)) {
+    if (black_node != NULL && (black_node->block_type == LOG_MANUAL_BLOCK || black_node->block_type == LOG_AI_BLOCK || black_node->block_type == LOG_AI_DOUBT_BLOCK)) {
         if (ip->ip_p == IPPROTO_TCP) {
             printf("[차단 타격!] 관리자/AI 차단 사이트 접속 끊음!! [%s]\n", check_site);
             inject_redirect_blocked(handle_inject, ethernet, ip, tcp, payload_size);
             inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
-            if(black_node->block_type == LOG_AI_BLOCK)
-              push_to_log_queue(inet_ntoa(ip->ip_src), check_site, black_node->block_type); 
-            return;
+            
+            push_to_log_queue(inet_ntoa(ip->ip_src), check_site, black_node->block_type, black_node->ai_score); 
+            
         } else if (ip->ip_p == IPPROTO_UDP) 
           return;
     }
 
     // [3계급 조건부 통과] AI가 예전에 검사해서 정상이라고 판단했던 도메인인가?
-    if (white_node != NULL && white_node->block_type == LOG_PASS) {
+    if (white_node != NULL && (white_node->block_type == LOG_AI_PASS || white_node->block_type == LOG_AI_DOUBT_PASS) ) {
         goto NORMAL_PASS_LOGIC; 
     }
 
     // [4계급 미지 도메인] 화이트/블랙 어디에도 없음 (Greylisting 시작)
     if (black_node == NULL) {
         if (ip->ip_p == IPPROTO_TCP) {
-            insert_hash_table(black_manager.active_shield, check_site, LOG_PENDING);
+            insert_hash_table(black_manager.active_shield, check_site, LOG_PENDING,-1);
         }
         push_to_ai_task_queue(check_site); 
 
@@ -148,6 +148,7 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
     } 
     else if (black_node->block_type == LOG_PENDING) {
         if (ip->ip_p == IPPROTO_TCP) {
+            push_to_ai_task_queue(check_site);
             inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
             return;
         } else if (ip->ip_p == IPPROTO_UDP) return;
@@ -167,7 +168,10 @@ void packet_handler(u_char *args, const struct pcap_pkthdr *header, const u_char
       }
 
       last_time[host_id] = time(NULL);
-      push_to_log_queue(inet_ntoa(ip->ip_src), check_site, LOG_PASS); 
+      
+      
+      
+      push_to_log_queue(inet_ntoa(ip->ip_src), check_site, white_node->block_type, white_node->ai_score); 
     }
   }
 

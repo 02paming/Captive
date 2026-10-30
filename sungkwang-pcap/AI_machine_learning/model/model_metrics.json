@@ -2,7 +2,7 @@
     {
         "version": "v1.0",
         "model_type": "기초 버전 RandomForest + N-gram",
-        "trained_at": "2026-10-28 12:01:40",
+        "trained_at": "2026-10-30 17:13:08",
         "hyperparameters": {
             "n_estimators": 150,
             "max_features": 5000
