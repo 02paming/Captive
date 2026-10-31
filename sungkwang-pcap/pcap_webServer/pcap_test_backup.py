@@ -3,38 +3,140 @@ import requests  # 서버 간 HTTP 통신을 위한 라이브러리 추가
 import threading  # uds 서버역할의 스레드를 백그라운드로 하나돌리기위함
 import os
 import time
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, request, render_template, jsonify, abort
 
 app = Flask(__name__)
 
-# C 프로그램(Control Plane)이 열어두고 대기하는 UDS 소켓 파일 경로
-SOCKET_PATH = "/tmp/authrized_ip"
-
-# 파이썬 uds서버 스레드가 열어두고 대기하는 uds 소켓파일 경로
-GC_LOG_SOCKET_PATH = "/tmp/pcap_gc.sock"
-
-# [NEW] 웹서버+백엔드 PC(192.168.3.23)의 인증 검증 API 주소
-API_SERVER_URL = "http://192.168.3.23:8080/api/verify"
-
-# 추가 => 웹서버 + 백엔드 pc의 인증테이블 인증데이터 삭제 api 주소
-API_AUTH_IP_DELETE = "http://192.168.3.23:8080/api/logout"
-
-# 추가 초기동기화 api
-API_INITIAL_SYNC = "http://192.168.3.23:8080/api/active_sessions"
-API_DOMAINS_SYNC = "http://192.168.3.23:8080/api/active_domains"
-
-# 추가 위협탐지로그
-API_BLACKLIST_LOG = "http://192.168.3.23:8080/api/blacklist_log"
-
-# 추가 인증된사원 웹접속로그
-API_WEB_ACCESS_LOG = "http://192.168.3.23:8080/api/web_access_log"
-
-# 추가 AI가 감지한 블랙리스트 추가
-# API_AI_BLACKLIST_INSERT = "http://192.168.3.23:8080/api/ai_block"
+# =========================================================================
+# 1. C 엔진과 통신하는 UDS 소켓 경로 모음
+# =========================================================================
+SOCKET_PATH = "/tmp/authrized_ip"               # [WR] C 수신 (명령어)
+GC_LOG_SOCKET_PATH = "/tmp/pcap_gc.sock"        # [RC] 파이썬 수신 (만료, 접속 로그)
+TOKEN_SOCKET_PATH = "/tmp/token_socket"         # [RC] 파이썬 수신 (일회용 토큰)
+SYNC_WAIT_SOCKET = "/tmp/sync_wait_socket"      # [RC] 파이썬 수신 (Handshake 조율용) 
 
 
+# =========================================================================
+# 2. 원격 웹 서버(192.168.3.23:8080) API 경로 모음
+# =========================================================================
+API_SERVER_URL = "http://192.168.3.23:8080/api/verify"              # 웹서버+백엔드 PC(192.168.3.23)의 인증 검증 API 주소
+API_AUTH_IP_DELETE = "http://192.168.3.23:8080/api/logout"          # 웹서버 + 백엔드 pc의 인증테이블 인증데이터 삭제 api 주소
+API_POLICY = "http://192.168.3.23:8080/api/policy"                  # 정책 호출 : 출근시간,퇴근시간
+API_INITIAL_SYNC = "http://192.168.3.23:8080/api/active_sessions"   # 초기동기화 -인증 api 
+API_DOMAINS_SYNC = "http://192.168.3.23:8080/api/active_domains"    # 초기동기화 -도메인 api 
+API_BLACKLIST_LOG = "http://192.168.3.23:8080/api/blacklist_log"    # 위협탐지로그
+API_WEB_ACCESS_LOG = "http://192.168.3.23:8080/api/web_access_log"  # 인증된사원 웹접속로그
+
+# C 엔진이 발급한 일회용 토큰을 임시 저장할 메모리 공간
+valid_tokens = set()
 
 
+# =========================================================================
+# 3. 토큰 수신용 UDS 서버 스레드
+# =========================================================================
+def token_uds_server():
+    if os.path.exists(TOKEN_SOCKET_PATH):
+        os.remove(TOKEN_SOCKET_PATH)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(TOKEN_SOCKET_PATH)
+    server.listen(5)
+    print(f"[UDS 서버] C 프로그램(Token) 통보 대기 중... ({TOKEN_SOCKET_PATH})")
+
+    while True:
+        try:
+            conn, _ = server.accept()
+            data = conn.recv(1024).decode('utf-8').strip()
+            if data:
+                print(f"[UDS 수신] C 프로그램 -> 동적 토큰 발급됨: {data}")
+                valid_tokens.add(data) # 메모리에 토큰 저장
+        except Exception as e:
+            print(f"[토큰 서버 에러] {e}")
+        finally:
+            if 'conn' in locals():
+                conn.close()
+# =========================================================================
+# 4. 마스터 동기화 스레드 (부팅 시 기동 순서 꼬임 방어) 기존 run_initial_sync() 에서 바꾼것임
+# =========================================================================   
+def master_sync_thread():
+    if os.path.exists(SYNC_WAIT_SOCKET):
+        os.remove(SYNC_WAIT_SOCKET)
+        
+    sync_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sync_server.bind(SYNC_WAIT_SOCKET)
+    sync_server.listen(1)
+    
+    print(f"[*] C 엔진(sync_runner) 연결 대기 중... ({SYNC_WAIT_SOCKET})")
+    
+    while True:
+        conn, _ = sync_server.accept()
+        print("[*] C 엔진 가동 감지! 장고(Django) 웹 서버와 동기화를 시작합니다.")
+        
+        # 8080 서버가 켜져서 응답할 때까지 무한 핑퐁 대기
+        while True:
+            try:
+                session_res = requests.get(API_INITIAL_SYNC, timeout=3)
+                
+                if session_res.status_code == 200:
+                    active_sessions = session_res.json().get("data", [])
+                    
+                    # 1. 정책 동기화 (팀원 기능 병합 - 출퇴근 시간)
+                    try:
+                        policy_res = requests.get(API_POLICY, timeout=3)
+                        if policy_res.status_code == 200:
+                            policy_data = policy_res.json().get("data", {})
+                            safe_start = policy_data.get("safe_zone_start", 9)
+                            safe_end = policy_data.get("safe_zone_end", 18)
+                            interval = policy_data.get("expire_interval", 600)
+                        else:
+                            safe_start, safe_end, interval = 9, 18, 600
+                        send_host_id_via_uds(f"POLICY {safe_start} {safe_end} {interval}", "")
+                    except:
+                        # 8080에서 정책 API를 못 만들었을 때 뻗지 않도록 방어
+                        send_host_id_via_uds("POLICY 9 18 600", "")
+                        
+                    # 2. 기존 인증된 PC 세션 복구 동기화
+                    for session in active_sessions:
+                        host_id = session["host_id"]
+                        mac = session["mac"]
+                        if mac and mac != "00:00:00:00:00:00":
+                            send_host_id_via_uds("RESTORE", f"{host_id} {mac}")
+
+                    # 3. 도메인 동기화 (성광님의 기존 ADD_BLACK / ADD_WHITE 단건 전송 방식 유지!)
+                    try:
+                        domain_res = requests.get(API_DOMAINS_SYNC, timeout=3)
+                        if domain_res.status_code == 200 and domain_res.json().get("status") == "success":
+                            db_domains = domain_res.json().get("data", [])
+                            for item in db_domains:
+                                
+                                sync_type = item["type"].upper() # BLACK 또는 WHITE
+                                domain = item["domain"]
+                                source = item.get("source", "USER")
+                                cmd = f"ADD_{sync_type}"
+                                payload = f"{domain} {source}"
+                                print(payload)
+                                send_host_id_via_uds(cmd, payload)
+
+                            print(f"=== [도메인 동기화] 총 {len(db_domains)}개 복구 ===")
+                    except Exception as e:
+                        print(f" -> [경고] 도메인 DB 요청 실패: {e}")
+                            
+                    print(f"=== [초기 동기화 완벽 성공] ===")
+                    
+                    # 4. sync_runner.py에게 종료 신호 전송 (C 엔진 pcap_loop 가동!)
+                    conn.sendall(b"SYNC_DONE")
+                    break 
+                    
+                else:
+                    print(f" -> [대기] 장고 응답코드: {session_res.status_code}. 5초 후 재시도...")
+            except Exception as e:
+                print(f" -> [연결 실패] 사유: {e}. 5초 후 재시도...")
+            time.sleep(5)
+            
+        conn.close()
+
+# =========================================================================
+# 5. 기존 UDS 통신 및 라우팅 (토큰 검증 추가)
+# =========================================================================
 @app.after_request
 def add_header(response):
   response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -43,16 +145,32 @@ def add_header(response):
 
 @app.route("/", methods=["GET"])
 def index():
+  req_token = request.args.get("token")
+  if not req_token or req_token not in valid_tokens:
+      abort(403) # 권한 없음 에러
+  valid_tokens.remove(req_token) # 한 번 쓴 토큰 폐기
   return render_template("index.html")
 
 
 @app.route("/ban", methods=["GET"])
 def ban_site():
-  return render_template("ban_page.html")
+  req_token = request.args.get("token")
+  if not req_token or req_token not in valid_tokens:
+      abort(403)
+  valid_tokens.remove(req_token)
+  
+  # C 엔진이 보낸 ?reason=MAC_Address_Error 쿼리를 템플릿에 전달 가능
+  reason = request.args.get("reason", "알 수 없는 사유")
+  return render_template("ban_page.html", reason=reason)
 
 
 @app.route("/blocked", methods=["GET"])
 def blocked_site():
+
+  req_token = request.args.get("token")
+  if not req_token or req_token not in valid_tokens:
+      abort(403)
+  valid_tokens.remove(req_token)
 
   # print(" [디버깅] 들어온 args 전체:", dict(request.args))
   # get이 객체의 키값꺼내는것 아래에도 자주쓰였음 지금은 쿼리스트링 키값가져옴 args에서
@@ -158,6 +276,7 @@ def update_domains():
     action = data.get("action")  # "add" 또는 "delete"
     sync_type = data.get("sync_type") # "black" 또는 "white"
     domain = data.get("domain") # "hacker.com"
+    source = data.get("source", "USER")
     
     # 1. 텍스트 파일 생성(f.write) 로직 완전히 삭제됨!
     # 2. UDS 명령어 조합 (예: ADD_BLACK, DEL_WHITE 등)
@@ -165,7 +284,9 @@ def update_domains():
     
     # 3. 파일 없이 곧바로 C엔진으로 단건 쏴주기
     try:
-        send_host_id_via_uds(command, domain)
+        payload = f"{domain} {source}" if action == 'add' else domain
+        # print(payload)
+        send_host_id_via_uds(command, payload)
         print(f"[PCAP 갱신] C엔진으로 0초 컷 업데이트 완료: {command} {domain}")
     except Exception as e:
         print(f"[PCAP 에러] UDS 신호 전송 실패: {e}")
@@ -324,7 +445,7 @@ def handle_uds_client(conn):
             "target_url": target_url,
             "ai_score": ai_score
         }
-        
+        print(data)
         print(f"\n[UDS 수신] 블랙 접속 로그 (DB 업데이트 요청) -> IP: {client_ip} / 도메인: {target_url}")
         
         # 2. 파일 쓰기 대신 백엔드의 /api/ai_block API로 POST 전송
@@ -340,75 +461,9 @@ def handle_uds_client(conn):
   finally:
     conn.close()
 
-
-# 초기 db의 인증되어있는 테이블 동기화로직 (서버 재부팅시 다 c전역변수들 초기화되는거 방지)
-def run_initial_sync():
-  print("=== [방화벽 초기 동기화 시작] ===")
-
-  try:
-    response = requests.get(API_INITIAL_SYNC)
-    domain_res = requests.get(API_DOMAINS_SYNC)
-
-    #인증정보동기화
-    if response.status_code == 200:
-
-      # 딕셔너리화
-      result = response.json()
-
-      if result.get("status") == "success":
-        active_sessions = result.get("data", [])
-
-        success_count = 0
-        for session in active_sessions:
-
-          host_id = session["host_id"]
-          mac = session["mac"]
-          login_timestamp = session["login_time"]
-
-          # 30일 만료 시간 계산 (초 단위 덧셈: 30일 * 24시간 * 60분 * 60초)
-          expire_timestamp = login_timestamp + 600
-
-          # C 프로그램에 RESTORE 명령어로 IP, MAC, 만료시간 일괄 전송
-          try:
-            if mac and mac != "00:00:00:00:00:00":
-              payload = f"{host_id} {mac} {expire_timestamp}"
-              send_host_id_via_uds("RESTORE", payload)
-              success_count += 1
-              cur_time = int(time.time())  # 이 함수가 실행될때 즉 초기동기화할때의 시간
-              real_time = expire_timestamp - cur_time  # 만료시간
-              if real_time < 0:
-                real_time = 0  # 다 만료되고 동기화하면 만료시간 0으로뜨게하기 음수보기싫으니
-              print(
-                  f" -> [복구 전송] IP: 2.{host_id} / MAC: {mac} / 만료시간: {real_time}")
-          except Exception as e:
-            print(
-                f"run_initial_sync() 중 에러발생!! (메인pcap서버 안켜서 uds에러일확률 큼!) {e}")
-        print(f"=== [초기 동기화 완료] 총 {success_count}대 복구 ===")
-      else:
-        print(f"백엔드 응답오류 : success가 아니라는뜻!")
-    else:
-      print("HTTP상태응답코드 오류 : 200이 아니라는뜻!")
-
-      #도메인동기화
-    if domain_res.status_code == 200 and domain_res.json().get("status") == "success":
-        db_domains = domain_res.json().get("data", [])
-        
-        for item in db_domains:
-            # item 딕셔너리에 {"type": "black", "domain": "hacker.com"} 이 있다고 가정
-            cmd = "ADD_BLACK" if item["type"] == "black" else "ADD_WHITE"
-            
-            # C엔진으로 도메인 1개씩 복구 명령 쏘기 (런타임 단건 갱신용 UDS 명령어 재활용!)
-            send_host_id_via_uds(cmd, item["domain"])
-            
-        print(f"=== [초기 동기화 완료] DB 누적 도메인 총 {len(db_domains)}개 복구 ===")
-  except Exception as e:
-    print(f"run_initial_sync() 중 에러발생!! (백엔드서버안켜서 get안되서 에러낫을확률 큼) {e}")
-  # 이 멍텅구리 웹서버를 안키고 pcap서버(c코드)를 키면 초기동기화가안됌 하지만 이후 웹서버를 키면서 다시됨 지장없음
-  # 하지만 백엔드서버를 안키고있으면 get이안됨으로 에러발생
-
-
 if __name__ == "__main__":
   # ptread_create 처럼 백그라운드로 이 함수 while true로 계속 돌고있을거임 (accept에서 블락상태)
-  threading.Thread(target=gc_uds_server, daemon=True).start()
-  run_initial_sync()
+  threading.Thread(target=gc_uds_server, daemon=True).start()  # 로깅 & 만료 처리
+  threading.Thread(target=token_uds_server, daemon=True).start() # 토큰 수신 
+  threading.Thread(target=master_sync_thread, daemon=True).start() # 무적 동기화 
   app.run(host="0.0.0.0", port=80)

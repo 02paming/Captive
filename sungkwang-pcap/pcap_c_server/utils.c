@@ -22,7 +22,9 @@ unsigned short csum(unsigned short *ptr, int nbytes)
     answer = (short)~sum;
     return (answer);
 }
-
+// ===================================
+// UDS 통신부
+// ===================================
 void uds_client_sock(const int ip){
   char msg[64];
   sprintf(msg, "GC|%d", ip);
@@ -32,9 +34,6 @@ void uds_client_sock(const int ip){
 
 void uds_client_sock_log(const LogPacket* local_log){
   char msg[512];
-
-  
-
   if(local_log->is_ai_blocked == 1 || local_log->is_ai_blocked == 3 || local_log->is_ai_blocked == 4) {
     sprintf(msg, "BLACK|%s|%s|%d|%.2f", local_log->client_ip, local_log->target_host, local_log->is_ai_blocked,local_log->ai_score);
   }
@@ -65,47 +64,69 @@ void send_to_uds(const char* message) {
     close(sockfd);
 }
 
-int packet_mac_check(const int host_id, const uint8_t* packet_mac){
-    int is_authenticated;
-    
+void send_token(u_int token) {
+    int send_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (send_fd == -1) return;
+
+    struct sockaddr_un wr_token;
+    memset(&wr_token, 0, sizeof(wr_token));
+    wr_token.sun_family = AF_UNIX;
+    strncpy(wr_token.sun_path, TOKEN_SOCK_PATH, sizeof(wr_token.sun_path) - 1);
+
+    if (connect(send_fd, (struct sockaddr *)&wr_token, sizeof(wr_token)) == 0) {
+        char buffer[64] = {0};
+        snprintf(buffer, sizeof(buffer), "%u\n", token);
+        write(send_fd, buffer, strlen(buffer));
+        printf("토큰 전송 성공: %u, 경로: [%s]\n", token, TOKEN_SOCK_PATH);
+    }
+    close(send_fd);
+}
+
+// ==========================================
+// [IP 및 MAC 주소 인증 검증] 
+// ==========================================
+
+int packet_mac_check(EngineContext *ctx, const int host_id, const uint8_t* packet_mac) {
+    int is_authenticated = 0;
 
     if (host_id >= 0 && host_id < 254) {
-        
-        memcpy(latest_mac_cache[host_id], packet_mac, ETH_ALEN);
+        // MAC 캐시 저장
+        memcpy(ctx->auth.latest_mac_cache[host_id], packet_mac, ETH_ALEN);
 
-        pthread_mutex_lock(&lock);
+        // 인증 전용 락 획득
+        pthread_mutex_lock(&ctx->auth.lock);
 
-        if (whitelist[host_id].is_active == 1) {
-            // 1. 최초 패킷: MAC이 아직 안 묶여있는 경우 바인딩
-            if (whitelist[host_id].is_mac_bound == 0) {
-                memcpy(whitelist[host_id].mac_addr, packet_mac, ETH_ALEN);
-                whitelist[host_id].is_mac_bound = 1;
+        if (ctx->auth.records[host_id].is_active == 1) {
+            // 1. 최초 패킷: MAC 바인딩
+            if (ctx->auth.records[host_id].is_mac_bound == 0) {
+                memcpy(ctx->auth.records[host_id].mac_addr, packet_mac, ETH_ALEN);
+                ctx->auth.records[host_id].is_mac_bound = 1;
             } 
-            // 2. 두 번째 패킷부터: 기존 MAC과 들어온 MAC 비교 검증
+            // 2. 두 번째 패킷부터: 위조 검증
             else {
-                if (memcmp(packet_mac, whitelist[host_id].mac_addr, ETH_ALEN) != 0) {
-                    // MAC이 다르면 IP 위조로 간주하고 다른곳으로 리다이렉팅시켜야함  (분기문에서 제어) 인증여부를 2로줌
-                    printf("인증한계정의 MAC과 일치하지않습니다.\n");
-                    pthread_mutex_unlock(&lock);
-                    return  2;
+                if (memcmp(packet_mac, ctx->auth.records[host_id].mac_addr, ETH_ALEN) != 0) {
+                    printf("인증한 계정의 MAC과 일치하지 않습니다.\n");
+                    pthread_mutex_unlock(&ctx->auth.lock);
+                    return 2; // 스푸핑 감지
                 }
             }
 
-            // 3. 검증을 통과하여 여전히 인증 상태라면 생존 시간 갱신 => 이 멤버변수를통해서 7일 미활동 초기화구문을사용할수있음
-            if (whitelist[host_id].is_active == 1) {
-                whitelist[host_id].last_seen = time(NULL);
+            // 3. 생존(마지막 활동) 시간 갱신 (출퇴근 스마트 만료용)
+            if (ctx->auth.records[host_id].is_active == 1) {
+                ctx->auth.records[host_id].last_seen = time(NULL);
             }
         }
-        is_authenticated = whitelist[host_id].is_active == 1 ? 1 : 0;
-        pthread_mutex_unlock(&lock);
+        is_authenticated = ctx->auth.records[host_id].is_active == 1 ? 1 : 0;
+        pthread_mutex_unlock(&ctx->auth.lock);
     }
-
     return is_authenticated;
 }
-
+// ==============================================
+// [로그 큐 (LogQueue) 컨트롤] 
+// ==============================================
 
 //queue push
-void push_to_log_queue(const char* ip, const char* domain, int is_blocked_flag, double score) {
+void push_to_log_queue(EngineContext *ctx, const char* ip, const char* domain, int is_blocked_flag, double score) {
     LogPacket log_data;
     memset(&log_data, 0, sizeof(LogPacket));
     
@@ -114,83 +135,79 @@ void push_to_log_queue(const char* ip, const char* domain, int is_blocked_flag, 
     log_data.is_ai_blocked = is_blocked_flag; 
     log_data.ai_score = score;
 
-    pthread_mutex_lock(&log_queue.queue_lock);
-    if (log_queue.count < MAX_LOG_QUEUE) {
-        log_queue.nodes[log_queue.rear] = log_data;
-        log_queue.rear = (log_queue.rear + 1) % MAX_LOG_QUEUE;
-        log_queue.count++;
-        pthread_cond_signal(&log_queue.log_cond); // GC 스레드 기상!
+    pthread_mutex_lock(&ctx->log_queue.queue_lock);
+    if (ctx->log_queue.count < MAX_LOG_QUEUE) {
+        ctx->log_queue.nodes[ctx->log_queue.rear] = log_data;
+        ctx->log_queue.rear = (ctx->log_queue.rear + 1) % MAX_LOG_QUEUE;
+        ctx->log_queue.count++;
+        pthread_cond_signal(&ctx->log_queue.log_cond); // 전송 스레드 기상
     } else {
         printf("[경고] 로그 큐 오버플로우\n"); 
     }
-    pthread_mutex_unlock(&log_queue.queue_lock);
+    pthread_mutex_unlock(&ctx->log_queue.queue_lock);
 }
 
 
 //quque pop
-int pop_log_queue(LogPacket* out_log) {
+int pop_log_queue(EngineContext *ctx, LogPacket* out_log) {
     int success = 0;
-    
-    pthread_mutex_lock(&log_queue.queue_lock); // 자물쇠 잠금
-    
-    if (log_queue.count > 0) {
-        *out_log = log_queue.nodes[log_queue.front];
-        log_queue.front = (log_queue.front + 1) % MAX_LOG_QUEUE;
-        log_queue.count--;
-        success = 1; // Pop 성공
-      } else {
-        // printf("[경고] 큐에서 pop할 데이터가 없습니다.\n");
-      }
-      
-      pthread_mutex_unlock(&log_queue.queue_lock); // 자물쇠 해제 (핵심: I/O 전에 미리 품)
-      
-      return success;
+    pthread_mutex_lock(&ctx->log_queue.queue_lock); 
+    if (ctx->log_queue.count > 0) {
+        *out_log = ctx->log_queue.nodes[ctx->log_queue.front];
+        ctx->log_queue.front = (ctx->log_queue.front + 1) % MAX_LOG_QUEUE;
+        ctx->log_queue.count--;
+        success = 1;
     }
-    
+    pthread_mutex_unlock(&ctx->log_queue.queue_lock); 
+    return success;
+}
+ 
+
+// =======================================
+// [AI 분석 큐 (AIQueue) 컨트롤] 
+// =======================================
+
 //ai분석용 queue push
-void push_to_ai_task_queue(const char *domain) {
-    pthread_mutex_lock(&ai_queue.lock);
-
-    if (ai_queue.count < MAX_AI_QUEUE) {
-        strncpy(ai_queue.tasks[ai_queue.rear].domain, domain, 127);
-        ai_queue.tasks[ai_queue.rear].domain[127] = '\0';
+void push_to_ai_task_queue(EngineContext *ctx, const char *domain) {
+    pthread_mutex_lock(&ctx->ai_queue.lock);
+    if (ctx->ai_queue.count < MAX_AI_QUEUE) {
+        strncpy(ctx->ai_queue.tasks[ctx->ai_queue.rear].domain, domain, 127);
+        ctx->ai_queue.tasks[ctx->ai_queue.rear].domain[127] = '\0';
         
-        ai_queue.rear = (ai_queue.rear + 1) % MAX_AI_QUEUE;
-        ai_queue.count++;
+        ctx->ai_queue.rear = (ctx->ai_queue.rear + 1) % MAX_AI_QUEUE;
+        ctx->ai_queue.count++;
         printf("1. 큐에 푸시됨: %s\n", domain);
-        // 자고 있는 AI 스레드를 깨움
-        pthread_cond_signal(&ai_queue.cond); 
+        pthread_cond_signal(&ctx->ai_queue.cond); // AI 워커 깨움
     }
-
-    pthread_mutex_unlock(&ai_queue.lock);
+    pthread_mutex_unlock(&ctx->ai_queue.lock);
 }
 
 //ai분석용 queue pop
-int pop_ai_queue(char* out_domain) {
-    pthread_mutex_lock(&ai_queue.lock);
+int pop_ai_queue(EngineContext *ctx, char* out_domain) {
+    pthread_mutex_lock(&ctx->ai_queue.lock);
 
-    // 1. 큐가 비어있으면 누군가 깨워줄 때까지 대기
-    while (ai_queue.count == 0 && keep_running) {
-        pthread_cond_wait(&ai_queue.cond, &ai_queue.lock);
+    while (ctx->ai_queue.count == 0 && ctx->keep_running) {
+        pthread_cond_wait(&ctx->ai_queue.cond, &ctx->ai_queue.lock);
     }
 
-    // 2. 종료 신호를 받았고 처리할 남은 큐도 없다면 락을 풀고 0 반환
-    if (!keep_running && ai_queue.count == 0) {
-        pthread_mutex_unlock(&ai_queue.lock);
+    if (!ctx->keep_running && ctx->ai_queue.count == 0) {
+        pthread_mutex_unlock(&ctx->ai_queue.lock);
         return 0; 
     }
 
-    // 3. 큐에서 도메인 데이터 복사 
-    strncpy(out_domain, ai_queue.tasks[ai_queue.front].domain, 127);
+    strncpy(out_domain, ctx->ai_queue.tasks[ctx->ai_queue.front].domain, 127);
     out_domain[127] = '\0'; 
 
-    // 4. 큐 인덱스 및 카운트 조정
-    ai_queue.front = (ai_queue.front + 1) % MAX_AI_QUEUE; 
-    ai_queue.count--;
+    ctx->ai_queue.front = (ctx->ai_queue.front + 1) % MAX_AI_QUEUE; 
+    ctx->ai_queue.count--;
 
-    pthread_mutex_unlock(&ai_queue.lock);
-    return 1; // 성공적으로 뺐음
+    pthread_mutex_unlock(&ctx->ai_queue.lock);
+    return 1; 
 }
+
+// ============================
+// AI 서버 통신부 
+// ============================
 
 // AI에게 도메인을 묻고 결과를 반환 (1 = BLACK, 2 = BLACK_DOUBT, 3 = WHITE_DOUBT , 4 = WHITE)
 int ask_ai_domain_status(const char* domain, double* out_score) {
@@ -237,10 +254,10 @@ int ask_ai_domain_status(const char* domain, double* out_score) {
 
         // 6. 문자열 상태를 비교하여 pcap_project.h 에 정의한 정수형 상태값 리턴
         if (status_str != NULL) {
-            if (strcmp(status_str, "BLOCK") == 0)      return LOG_AI_BLOCK;
-            if (strcmp(status_str, "SUSPICIOUS") == 0) return LOG_AI_DOUBT_BLOCK;
-            if (strcmp(status_str, "GREYLIST") == 0)   return LOG_AI_DOUBT_PASS;
-            if (strcmp(status_str, "PASS") == 0)       return LOG_AI_PASS;
+            if (strcmp(status_str, "BLACK") == 0)      return LOG_AI_BLOCK;
+            if (strcmp(status_str, "BLACK_DOUBT") == 0) return LOG_AI_DOUBT_BLOCK;
+            if (strcmp(status_str, "WHITE_DOUBT") == 0)   return LOG_AI_DOUBT_PASS;
+            if (strcmp(status_str, "WHITE") == 0)       return LOG_AI_PASS;
         }
     }
 
@@ -248,7 +265,9 @@ int ask_ai_domain_status(const char* domain, double* out_score) {
     return LOG_AI_PASS;
 }
 
-
+// =========================
+// 해시 방패 매니저 
+// =========================
 
 // 1. djb2 알고리즘 (글자를 수학 공식에 넣어 0~100002 사이의 방 번호로 즉시 뱉어냄)
 unsigned long hash_djb2(const char *str) {

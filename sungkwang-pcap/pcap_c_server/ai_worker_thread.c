@@ -1,15 +1,24 @@
 #include "pcap_project.h"
 
+typedef struct {
+  EngineContext *ctx_ptr;
+  int id;
+} WorkerArgs;
+
 void* ai_worker_thread(void* arg) {
 
-    int worker_id = *((int*)arg);
+    WorkerArgs *w_args = (WorkerArgs *)arg;
+
+    EngineContext *ctx = w_args->ctx_ptr;
+    int worker_id = w_args->id;
+
     printf("[AI Worker %d] 대기 시작...\n", worker_id);
 
     char check_site[128];
 
-    while (keep_running) {
+    while (ctx->keep_running) {
 
-      if(pop_ai_queue(check_site)){
+      if(pop_ai_queue(ctx, check_site)){
 
         printf("[AI Worker %d] 큐에서 꺼냄: %s\n", worker_id, check_site);
         printf("[AI Worker %d] 도메인 검사 시작: %s\n", worker_id, check_site);
@@ -23,7 +32,7 @@ void* ai_worker_thread(void* arg) {
 
         // [조건 A] 악성 판정 (확실한 BLOCK 또는 악성 의심 SUSPICIOUS)
         // 둘 다 일단 블랙 방패(차단)에 넣습니다. 상태 코드만 다르게 부여.
-        if (ai_verdict == LOG_AI_BLOCK || ai_verdict == LOG_AI_DOUBT_PASS) { 
+        if (ai_verdict == LOG_AI_BLOCK || ai_verdict == LOG_AI_DOUBT_BLOCK) { 
             
             if (ai_verdict == LOG_AI_BLOCK)
                 printf("[AI 헌터 %d] 악성 감지! (%.1f점) 블랙 방패 장전 [%s]\n", worker_id, ai_score, check_site);
@@ -31,22 +40,22 @@ void* ai_worker_thread(void* arg) {
                 printf("[AI 헌터 %d] 악성 의심! (%.1f점) 블랙 방패 임시 장전 [%s]\n", worker_id, ai_score, check_site);
             
             // 1. 뒤에서 쉬고 있는 블랙 예비 방패 찾기
-            HashTable *standby_shield = (black_manager.active_shield == black_manager.shield_A) ? black_manager.shield_B : black_manager.shield_A;
+            HashTable *standby_shield = (ctx->black_manager.active_shield == ctx->black_manager.shield_A) ? ctx->black_manager.shield_B : ctx->black_manager.shield_A;
             
             // 2. 쉬는 방패에 삽입 (ai_verdict 값을 그대로 해시 상태로 사용!)
             insert_hash_table(standby_shield, check_site, ai_verdict, ai_score);
             
             // 3. 패킷 검사 스레드의 시선 돌리기 (Swap)
-            __atomic_store_n(&black_manager.active_shield, standby_shield, __ATOMIC_SEQ_CST);
+           __atomic_store_n(&ctx->black_manager.active_shield, standby_shield, __ATOMIC_SEQ_CST);
             
             // 4. 구형 방패 동기화
-            HashTable *old_active_shield = (standby_shield == black_manager.shield_A) ? black_manager.shield_B : black_manager.shield_A;
+            HashTable *old_active_shield = (standby_shield == ctx->black_manager.shield_A) ? ctx->black_manager.shield_B : ctx->black_manager.shield_A;
             insert_hash_table(old_active_shield, check_site, ai_verdict, ai_score);
         } 
         
         // [조건 B] 정상 판정 (확실한 PASS 또는 정상 의심 GREYLIST)
         // 둘 다 일단 화이트 방패(통과)에 넣습니다.
-        else if (ai_verdict == LOG_AI_PASS || ai_verdict == LOG_AI_DOUBT_BLOCK) {
+        else if (ai_verdict == LOG_AI_PASS || ai_verdict == LOG_AI_DOUBT_PASS) {
             
             if (ai_verdict == LOG_AI_PASS)
                 printf("[AI 헌터 %d] 정상 감지! (%.1f점) 화이트 방패 장전 [%s]\n", worker_id, ai_score, check_site);
@@ -54,16 +63,16 @@ void* ai_worker_thread(void* arg) {
                 printf("[AI 헌터 %d] 정상 의심! (%.1f점) 화이트 방패 임시 장전 [%s]\n", worker_id, ai_score, check_site);
                 
             // 1. 뒤에서 쉬고 있는 화이트 예비 방패 찾기
-            HashTable *standby_shield = (white_manager.active_shield == white_manager.shield_A) ? white_manager.shield_B : white_manager.shield_A;
+            HashTable *standby_shield = (ctx->white_manager.active_shield == ctx->white_manager.shield_A) ? ctx->white_manager.shield_B : ctx->white_manager.shield_A;
             
             // 2. 쉬는 방패에 삽입 
             insert_hash_table(standby_shield, check_site, ai_verdict, ai_score);
             
             // 3. 패킷 검사 스레드의 시선 돌리기 (Swap)
-            __atomic_store_n(&white_manager.active_shield, standby_shield, __ATOMIC_SEQ_CST);
+            __atomic_store_n(&ctx->white_manager.active_shield, standby_shield, __ATOMIC_SEQ_CST);
             
             // 4. 구형 방패 동기화
-            HashTable *old_active_shield = (standby_shield == white_manager.shield_A) ? white_manager.shield_B : white_manager.shield_A;
+            HashTable *old_active_shield = (standby_shield == ctx->white_manager.shield_A) ? ctx->white_manager.shield_B : ctx->white_manager.shield_A;
             insert_hash_table(old_active_shield, check_site, ai_verdict, ai_score);
         }
         else {

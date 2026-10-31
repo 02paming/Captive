@@ -50,12 +50,15 @@ def handle_client(conn, addr):
             start_time = time.time()
 
             # 테스트용 강제 하드코딩 추가
-            # if domain == "example.com":
-            #     print(f"[TEST] {domain} AI 정밀 분석 중... (0.035초초 소요)")
-            #     time.sleep(0.035) # 실제 AI 연산 + DB 갱신 딜레이 0.078초 부여
-            #     print(f"[TEST] {domain} 강제 악성 도메인(BLOCK) 판정!")
-            #     conn.sendall(b"BLOCK")
-            #     return
+            if domain == "example.com":
+                print(f"[TEST] {domain} AI 정밀 분석 중... (0.035초초 소요)")
+                time.sleep(0.035) # 실제 AI 연산 + DB 갱신 딜레이 0.078초 부여
+                print(f"[TEST] {domain} 강제 악성 도메인(BLACK_DOUBT) 판정!")
+                status = "BLACK_DOUBT"
+                score = 60.0
+                response_data = f"{status}|{score}"
+                conn.sendall(response_data.encode('utf-8'))
+                return
             
             # 기본값 설정
             status = "WHITE"
