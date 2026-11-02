@@ -233,7 +233,7 @@ y = df['label']
 
 # 3. 핵심: 문자열 벡터화 (글자를 2~3개씩 쪼개서 수학적 패턴으로 변환)
 print("문자열 벡터화(N-gram) 진행 중... (시간이 조금 걸립니다)")
-vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2, 3), max_features=5000)
+vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(2, 3), max_features=4000)
 X_vectorized = vectorizer.fit_transform(X_raw)
 
 # 4. 훈련용(80%)과 테스트용(20%) 데이터 분할 (사진의 개념 적용)
@@ -271,7 +271,7 @@ current_metrics = {
     "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     "hyperparameters": {
         "n_estimators": 150,                # 방금 적용한 트리 개수 적어두기
-        "max_features": 5000,               # 방금 적용한 단어장 크기 적어두기
+        "max_features": 4000,               # 방금 적용한 단어장 크기 적어두기
         # "class_weight": "0: 5.0, 1: 1.0",   # 페널티 수치 적어두기
         # "min_samples_leaf": 5               # 꼬투리 잡기 방지 수치 적어두기
     },

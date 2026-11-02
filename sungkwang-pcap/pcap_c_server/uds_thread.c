@@ -60,10 +60,11 @@ void *uds_server_thread(void *arg) {
 
           char domain[256] = {0};
           char source[32] = "USER";
-
+          double ai_score = -1.0;
+            
           // 명령어 다음 문자열(hacker.com 등)을 추출 (%*s는 첫 번째 문자열 무시)
-          if (sscanf(buffer, "%*s %255s %31s", domain, source) >= 1) {
-              printf("%s\n",source);
+          if (sscanf(buffer, "%*s %255s %31s %lf", domain, source, &ai_score) >= 1) {
+              //  printf("%.2f\n",ai_score);
             // 타겟 방패 매니저 확인 및 동작 플래그 설정
             DoubleBufferManager *target_manager = (strstr(command, "BLACK") != NULL) ? &ctx->black_manager : &ctx->white_manager;
 
@@ -84,7 +85,7 @@ void *uds_server_thread(void *arg) {
 
             // 2. 쉬고 있는 방패에 도메인 1개 추가 또는 삭제 (락 없음!)
             if (is_add) {
-                insert_hash_table(standby_shield, domain, log_type, -1);
+                insert_hash_table(standby_shield, domain, log_type, ai_score);
             } else {
                 delete_from_hash_table(standby_shield, domain); 
             }

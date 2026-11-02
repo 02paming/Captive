@@ -183,6 +183,7 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
     //정상 통과 및 로깅
     NORMAL_PASS_LOGIC:
     if (ip->ip_p == IPPROTO_TCP) {
+
       if (payload_size < 4 || strncmp(payload_start, "GET ", 4) != 0 || memmem(payload_start, payload_size, "Accept: text/html", 17) == NULL) return;
       
       int is_refresh = (memmem(payload_start, payload_size, "Cache-Control: max-age=0", 24) != NULL) ||
@@ -194,8 +195,6 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
       }
 
       ctx->auth.records[host_id].last_log_time = time(NULL);
-      
-      
       
       push_to_log_queue(ctx, inet_ntoa(ip->ip_src), check_site, white_node->block_type, white_node->ai_score); 
     }

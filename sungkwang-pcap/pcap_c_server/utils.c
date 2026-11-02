@@ -34,6 +34,7 @@ void uds_client_sock(const int ip){
 
 void uds_client_sock_log(const LogPacket* local_log){
   char msg[512];
+  
   if(local_log->is_ai_blocked == 1 || local_log->is_ai_blocked == 3 || local_log->is_ai_blocked == 4) {
     sprintf(msg, "BLACK|%s|%s|%d|%.2f", local_log->client_ip, local_log->target_host, local_log->is_ai_blocked,local_log->ai_score);
   }

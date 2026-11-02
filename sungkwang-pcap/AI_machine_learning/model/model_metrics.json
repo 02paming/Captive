@@ -2,22 +2,43 @@
     {
         "version": "v1.0",
         "model_type": "기초 버전 RandomForest + N-gram",
-        "trained_at": "2026-10-30 17:13:08",
+        "trained_at": "2026-11-02 16:28:13",
         "hyperparameters": {
-            "n_estimators": 150,
-            "max_features": 5000
+            "n_estimators": 200,
+            "max_features": 3000
         },
         "confusion_matrix": {
-            "TP": 19016,
-            "TN": 19599,
-            "FP": 464,
-            "FN": 920
+            "TP": 19085,
+            "TN": 19603,
+            "FP": 460,
+            "FN": 851
         },
         "scores": {
-            "accuracy": 96.54,
-            "precision": 97.62,
-            "recall": 95.39,
-            "f1_score": 96.49
+            "accuracy": 96.72,
+            "precision": 97.65,
+            "recall": 95.73,
+            "f1_score": 96.68
+        }
+    },
+    {
+        "version": "v1.1",
+        "model_type": "기초 버전 RandomForest + N-gram",
+        "trained_at": "2026-11-02 17:16:58",
+        "hyperparameters": {
+            "n_estimators": 150,
+            "max_features": 4000
+        },
+        "confusion_matrix": {
+            "TP": 19030,
+            "TN": 19572,
+            "FP": 491,
+            "FN": 906
+        },
+        "scores": {
+            "accuracy": 96.51,
+            "precision": 97.48,
+            "recall": 95.46,
+            "f1_score": 96.46
         }
     }
 ]

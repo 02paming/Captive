@@ -6,6 +6,8 @@ import time
 from flask import Flask, request, render_template, jsonify, abort
 
 app = Flask(__name__)
+# 0. 내부 ai프로세스와 통신
+CONFIG_SOCKET_PATH = "/tmp/ai_config.sock"
 
 # =========================================================================
 # 1. C 엔진과 통신하는 UDS 소켓 경로 모음
@@ -111,8 +113,9 @@ def master_sync_thread():
                                 sync_type = item["type"].upper() # BLACK 또는 WHITE
                                 domain = item["domain"]
                                 source = item.get("source", "USER")
+                                ai_score = item.get("ai_score", -1.0)
                                 cmd = f"ADD_{sync_type}"
-                                payload = f"{domain} {source}"
+                                payload = f"{domain} {source} {ai_score}"
                                 print(payload)
                                 send_host_id_via_uds(cmd, payload)
 
@@ -277,6 +280,7 @@ def update_domains():
     sync_type = data.get("sync_type") # "black" 또는 "white"
     domain = data.get("domain") # "hacker.com"
     source = data.get("source", "USER")
+    ai_score = data.get("ai_score", -1.0)
     
     # 1. 텍스트 파일 생성(f.write) 로직 완전히 삭제됨!
     # 2. UDS 명령어 조합 (예: ADD_BLACK, DEL_WHITE 등)
@@ -284,10 +288,10 @@ def update_domains():
     
     # 3. 파일 없이 곧바로 C엔진으로 단건 쏴주기
     try:
-        payload = f"{domain} {source}" if action == 'add' else domain
+        payload = f"{domain} {source} {ai_score}" if action == 'add' else domain
         # print(payload)
         send_host_id_via_uds(command, payload)
-        print(f"[PCAP 갱신] C엔진으로 0초 컷 업데이트 완료: {command} {domain}")
+        print(f"[PCAP 갱신] C엔진으로 0초 컷 업데이트 완료: {command} {payload}")
     except Exception as e:
         print(f"[PCAP 에러] UDS 신호 전송 실패: {e}")
         
@@ -388,6 +392,8 @@ def handle_uds_client(conn):
   try:
     data = conn.recv(1024).decode('utf-8').strip()
 
+    print(data)
+
     if data:
       parts = data.split('|')
       command = parts[0]
@@ -460,6 +466,53 @@ def handle_uds_client(conn):
             print(f"   [API 전달 실패] DB 업데이트 오류: {e}")
   finally:
     conn.close()
+
+# =========================================================
+# 6. 관리자 페이지에서 변경한 AI 임계치 실시간 수신
+# =========================================================
+@app.route("/api/update_ai_threshold", methods=["POST"])
+def update_ai_threshold():
+    data = request.json
+    
+    # 장고에서 안 보냈을 경우를 대비해 기존 DB 기본값을 방어 코드로 설정
+    black = data.get("black_limit", 70.0)
+    black_doubt = data.get("black_doubt_limit", 51.0)
+    white_doubt = data.get("white_doubt_limit", 31.0)
+    
+    # AI 파이썬 프로세스가 읽기 편하게 띄어쓰기로 묶음 (예: "80.0 60.0 40.0")
+    payload = f"{black} {black_doubt} {white_doubt}"
+    
+    try:
+        # AI 프로세스의 설정 전용 UDS 소켓으로 발사!
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.connect(CONFIG_SOCKET_PATH)
+        client.sendall(payload.encode('utf-8'))
+        client.close()
+        
+        print(f"\n[PCAP 로그] AI 임계치 실시간 변경 통보 완료: {payload}")
+        return jsonify({"status": "success"}), 200
+        
+    except Exception as e:
+        print(f"[PCAP 에러] AI 설정 UDS 전송 실패 (AI 프로세스가 꺼져있음): {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# =========================================================
+# 7. 관리자 페이지에서 변경한 AI 모델 실시간 수신
+# ========================================================= 
+@app.route("/api/update_ai_model", methods=["POST"])
+def update_ai_model():
+    version = request.json.get("model_version") # 예: "v1.1"
+    
+    # AI 프로세스가 알아먹게 명령어 조합 (예: "MODEL v1.1")
+    payload = f"MODEL {version}"
+    
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.connect(CONFIG_SOCKET_PATH) 
+    client.sendall(payload.encode('utf-8'))
+    client.close()
+    
+    return jsonify({"status": "success"})
 
 if __name__ == "__main__":
   # ptread_create 처럼 백그라운드로 이 함수 while true로 계속 돌고있을거임 (accept에서 블락상태)

@@ -686,8 +686,21 @@ CREATE TABLE IF NOT EXISTS `ai_threshold_config` (
 INSERT INTO `ai_threshold_config` (`black_limit`, `black_doubt_limit`, `white_doubt_limit`) 
 VALUES (70, 51, 31);
 
+-- 로그 테이블에 status_code 컬럼 추가
+ALTER TABLE web_access_log 
+ADD COLUMN ai_status_code INT(11) DEFAULT 0 COMMENT 'AI 상세 판정 코드 (3:차단, 4:블랙의심, 5:화이트의심, 6:안전)';
 
--- 6. [필수 반영] 자동 삭제 스케줄러 업데이트
+-- 그떄 추가된당시의 ai_score점수
+-- 1. 화이트리스트 테이블에 ai_score 컬럼 추가
+ALTER TABLE whitelist_addr 
+ADD COLUMN ai_score DOUBLE DEFAULT -1.0 COMMENT 'AI 판별 점수';
+
+-- 2. 블랙리스트 테이블에 ai_score 컬럼 추가
+ALTER TABLE blacklist_addr 
+ADD COLUMN ai_score DOUBLE DEFAULT -1.0 COMMENT 'AI 판별 점수';
+
+
+-- 6.자동 삭제 스케줄러 업데이트
 -- 삭제된 테이블(dga_detection_log, blacklist_addr_access_log)이 스케줄러에서 에러를 유발하지 않도록 제외합니다.
 DELIMITER $$
 DROP EVENT IF EXISTS auto_purge_all_tables$$
