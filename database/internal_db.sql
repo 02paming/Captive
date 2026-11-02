@@ -668,6 +668,25 @@ DROP TABLE IF EXISTS `AI_whitelist_addr`;
 SET FOREIGN_KEY_CHECKS = 1;
 
 
+-- 261102
+-- AI 모델 위험도 임계값 설정 테이블 추가
+
+USE internal_db;
+
+CREATE TABLE IF NOT EXISTS `ai_threshold_config` (
+    `config_id` INT NOT NULL AUTO_INCREMENT COMMENT '설정 테이블 id',
+    `black_limit` INT NOT NULL DEFAULT 70 COMMENT '블랙리스트 확정 임계값',
+    `black_doubt_limit` INT NOT NULL DEFAULT 51 COMMENT '블랙리스트 의심 임계값',
+    `white_doubt_limit` INT NOT NULL DEFAULT 31 COMMENT '화이트리스트 의심 임계값',
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '최근 설정 변경 시간',
+    PRIMARY KEY (`config_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 초기 기본값 데이터 1줄 삽입 (이후로는 이 레코드를 UPDATE 하는 방식으로 사용)
+INSERT INTO `ai_threshold_config` (`black_limit`, `black_doubt_limit`, `white_doubt_limit`) 
+VALUES (70, 51, 31);
+
+
 -- 6. [필수 반영] 자동 삭제 스케줄러 업데이트
 -- 삭제된 테이블(dga_detection_log, blacklist_addr_access_log)이 스케줄러에서 에러를 유발하지 않도록 제외합니다.
 DELIMITER $$
