@@ -1,0 +1,68 @@
+\hypertarget{main_8c}{}\section{main.\+c File Reference}
+\label{main_8c}\index{main.\+c@{main.\+c}}
+
+
+탐지엔진 초기화 및 실행 흐름 관리  디테일한 설명을 여기에 쓰시면 됩니다.  
+
+
+{\ttfamily \#include \char`\"{}pcap\+\_\+project.\+h\char`\"{}}\newline
+\subsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \mbox{\hyperlink{structDevice}{Device}}
+\end{DoxyCompactItemize}
+\subsection*{Typedefs}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\Hypertarget{main_8c_a9aa157f94d80c5e2849d8d52a995cc7a}\label{main_8c_a9aa157f94d80c5e2849d8d52a995cc7a}} 
+typedef struct \mbox{\hyperlink{structDevice}{Device}} {\bfseries Device}
+\end{DoxyCompactItemize}
+\subsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+void \mbox{\hyperlink{main_8c_a8bfc90b3fb9344e9caafec953baacc0b}{handle\+\_\+sigint}} (int sig)
+\begin{DoxyCompactList}\small\item\em 시그널 핸들링 함수 \end{DoxyCompactList}\item 
+int \mbox{\hyperlink{main_8c_a840291bc02cba5474a4cb46a9b9566fe}{main}} (void)
+\begin{DoxyCompactList}\small\item\em 메인함수 \end{DoxyCompactList}\end{DoxyCompactItemize}
+\subsection*{Variables}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\Hypertarget{main_8c_aa599e5a2cea07606552a0b3a1067ebf8}\label{main_8c_aa599e5a2cea07606552a0b3a1067ebf8}} 
+\mbox{\hyperlink{structEngineContext}{Engine\+Context}} $\ast$ {\bfseries g\+\_\+ctx} = N\+U\+LL
+\end{DoxyCompactItemize}
+
+
+\subsection{Detailed Description}
+탐지엔진 초기화 및 실행 흐름 관리  디테일한 설명을 여기에 쓰시면 됩니다. 
+
+
+
+\subsection{Function Documentation}
+\mbox{\Hypertarget{main_8c_a8bfc90b3fb9344e9caafec953baacc0b}\label{main_8c_a8bfc90b3fb9344e9caafec953baacc0b}} 
+\index{main.\+c@{main.\+c}!handle\+\_\+sigint@{handle\+\_\+sigint}}
+\index{handle\+\_\+sigint@{handle\+\_\+sigint}!main.\+c@{main.\+c}}
+\subsubsection{\texorpdfstring{handle\+\_\+sigint()}{handle\_sigint()}}
+{\footnotesize\ttfamily void handle\+\_\+sigint (\begin{DoxyParamCaption}\item[{int}]{sig }\end{DoxyParamCaption})}
+
+
+
+시그널 핸들링 함수 
+
+
+\begin{DoxyParams}[1]{Parameters}
+\mbox{\tt in}  & {\em sig} & 발생한 시그널 번호 \\
+\hline
+\end{DoxyParams}
+\mbox{\Hypertarget{main_8c_a840291bc02cba5474a4cb46a9b9566fe}\label{main_8c_a840291bc02cba5474a4cb46a9b9566fe}} 
+\index{main.\+c@{main.\+c}!main@{main}}
+\index{main@{main}!main.\+c@{main.\+c}}
+\subsubsection{\texorpdfstring{main()}{main()}}
+{\footnotesize\ttfamily int main (\begin{DoxyParamCaption}\item[{void}]{ }\end{DoxyParamCaption})}
+
+
+
+메인함수 
+
+\begin{DoxyReturn}{Returns}
+정상 종료 시 0, 오류 발생 시 0 이외의 값 
+\end{DoxyReturn}

@@ -1,3 +1,31 @@
+/*!
+ * @mainpage AI 기반 웹 접근제어 탐지 엔진
+ *
+ * @section overview 프로젝트 개요 
+ * 미러링 패킷을 분석하여 유해 사이트 접근을 탐지합니다.
+ *
+ * @section architecture 시스템 구성
+ * - 탐지 엔진 : 패킷 수집 및 접근 제어
+ * - 웹 서버 : 관리자 페이지와 API 제공
+ * - DB 서버 : 정책 및 로그 저장
+ *
+ * @section build 빌드 방법
+ * @code{.sh}
+ * make
+ * @endcode
+ *
+ */
+
+/*!
+ * @file main.c
+ * @brief 탐지엔진 초기화 및 실행 흐름 관리
+ * @detail 
+ * 디테일한 설명을 여기에 쓰시면 됩니다.
+ *
+ *
+ */
+
+
 #include "pcap_project.h"
 
 // 디바이스와 핸들을 하나로 묶어 관리
@@ -29,6 +57,11 @@ typedef struct Device {
 //시그널 핸들러에서 안전한 종료 처리를 위해 오직 하나의 포인터만 전역으로
 EngineContext *g_ctx = NULL;
 
+/*!
+ * @brief 시그널 핸들링 함수
+ * @param[in] sig 발생한 시그널 번호
+ *
+ */
  void handle_sigint(int sig) {
     if (!g_ctx) return;
     
@@ -56,6 +89,11 @@ EngineContext *g_ctx = NULL;
     }
   }
 
+/*!
+ * @brief 메인함수
+ * @return 정상 종료 시 0, 오류 발생 시 0 이외의 값
+ *
+ */
 int main(void) {
   srand(time(NULL));
   
@@ -166,17 +204,17 @@ int main(void) {
   ctx.white_manager.shield_A = create_hash_table();
   ctx.white_manager.shield_B = create_hash_table();
 
-  load_domains_from_txt(ctx.black_manager.shield_A, "/tmp/ai_blacklist.txt", LOG_AI_BLOCK, -1);
-  load_domains_from_txt(ctx.black_manager.shield_B, "/tmp/ai_blacklist.txt", LOG_AI_BLOCK, -1);
+  load_domains_from_txt(ctx.black_manager.shield_A, "/tmp/ai_blacklist.txt", LOG_MANUAL_BLOCK, -1);
+  load_domains_from_txt(ctx.black_manager.shield_B, "/tmp/ai_blacklist.txt", LOG_MANUAL_BLOCK, -1);
   
-  load_domains_from_txt(ctx.white_manager.shield_A, "/tmp/ai_whitelist.txt", LOG_AI_PASS, -1);
-  load_domains_from_txt(ctx.white_manager.shield_B, "/tmp/ai_whitelist.txt", LOG_AI_PASS, -1);
+  load_domains_from_txt(ctx.white_manager.shield_A, "/tmp/ai_whitelist.txt", LOG_MANUAL_PASS, -1);
+  load_domains_from_txt(ctx.white_manager.shield_B, "/tmp/ai_whitelist.txt", LOG_MANUAL_PASS, -1);
 
   ctx.black_manager.active_shield = ctx.black_manager.shield_A;
   ctx.white_manager.active_shield = ctx.white_manager.shield_A;
 
   // 스레드 가동
-  pthread_t uds_tid, clean_tid, sync_tid, log_tid;
+  pthread_t uds_tid, clean_tid, log_tid;
   pthread_t ai_threads[AI_WORKERS];
 
   typedef struct {

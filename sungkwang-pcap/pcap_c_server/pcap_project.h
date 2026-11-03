@@ -202,7 +202,6 @@ void clear_hash_table(HashTable* ht);
 void load_domains_from_txt(HashTable *ht, const char *filepath, int block_type, double score);
 
 // 인젝션 
-void inject_redirect(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size);
 void inject_redirect_blocked(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token);
 void inject_rst(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size);
 

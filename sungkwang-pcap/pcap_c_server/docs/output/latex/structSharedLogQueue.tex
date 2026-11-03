@@ -1,0 +1,28 @@
+\hypertarget{structSharedLogQueue}{}\section{Shared\+Log\+Queue Struct Reference}
+\label{structSharedLogQueue}\index{Shared\+Log\+Queue@{Shared\+Log\+Queue}}
+\subsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\Hypertarget{structSharedLogQueue_ae95b68a3126058b7d31e5d5b197306da}\label{structSharedLogQueue_ae95b68a3126058b7d31e5d5b197306da}} 
+\mbox{\hyperlink{structLogPacket}{Log\+Packet}} {\bfseries nodes} \mbox{[}M\+A\+X\+\_\+\+L\+O\+G\+\_\+\+Q\+U\+E\+UE\mbox{]}
+\item 
+\mbox{\Hypertarget{structSharedLogQueue_a2608a79a93f3591ec0b6dafccf8e28d0}\label{structSharedLogQueue_a2608a79a93f3591ec0b6dafccf8e28d0}} 
+int {\bfseries front}
+\item 
+\mbox{\Hypertarget{structSharedLogQueue_a4fcd50beef88db7997884a1c7b21c465}\label{structSharedLogQueue_a4fcd50beef88db7997884a1c7b21c465}} 
+int {\bfseries rear}
+\item 
+\mbox{\Hypertarget{structSharedLogQueue_aca1729ea98b4507940c8c606b3ed7ccd}\label{structSharedLogQueue_aca1729ea98b4507940c8c606b3ed7ccd}} 
+int {\bfseries count}
+\item 
+\mbox{\Hypertarget{structSharedLogQueue_a2116713448f916308ac5d93c193941dc}\label{structSharedLogQueue_a2116713448f916308ac5d93c193941dc}} 
+pthread\+\_\+mutex\+\_\+t {\bfseries queue\+\_\+lock}
+\item 
+\mbox{\Hypertarget{structSharedLogQueue_ab131a1a337c343826514d7639fc388da}\label{structSharedLogQueue_ab131a1a337c343826514d7639fc388da}} 
+pthread\+\_\+cond\+\_\+t {\bfseries log\+\_\+cond}
+\end{DoxyCompactItemize}
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+pcap\+\_\+project.\+h\end{DoxyCompactItemize}
