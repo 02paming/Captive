@@ -132,9 +132,13 @@ typedef struct {
     int end_time;
     int expire_interval;
 
-    // [더블 버퍼링 방패 매니저]
+    // [더블 버퍼링 방패 매니저(동적)]
     DoubleBufferManager black_manager;
     DoubleBufferManager white_manager;
+
+    //[고정전용 화이트,블랙 해시테이블 (고정)]
+    HashTable *fixed_black_shield;
+    HashTable *fixed_white_shield;
 
     // [스레드 간 통신 큐]
     SharedLogQueue log_queue;

@@ -203,15 +203,17 @@ int main(void) {
   ctx.black_manager.shield_B = create_hash_table();
   ctx.white_manager.shield_A = create_hash_table();
   ctx.white_manager.shield_B = create_hash_table();
-
-  load_domains_from_txt(ctx.black_manager.shield_A, "/tmp/ai_blacklist.txt", LOG_MANUAL_BLOCK, -1);
-  load_domains_from_txt(ctx.black_manager.shield_B, "/tmp/ai_blacklist.txt", LOG_MANUAL_BLOCK, -1);
-  
-  load_domains_from_txt(ctx.white_manager.shield_A, "/tmp/ai_whitelist.txt", LOG_MANUAL_PASS, -1);
-  load_domains_from_txt(ctx.white_manager.shield_B, "/tmp/ai_whitelist.txt", LOG_MANUAL_PASS, -1);
-
+ 
   ctx.black_manager.active_shield = ctx.black_manager.shield_A;
   ctx.white_manager.active_shield = ctx.white_manager.shield_A;
+
+  //2번째 덮어쓰기후 노드지우면 그 도메인 ai분석가는 문제가있을수있으므로 테이블을 따로팜
+  ctx.fixed_black_shield = create_hash_table();
+  ctx.fixed_white_shield = create_hash_table();
+  
+  printf("고정 데이터 로드 중...\n");
+  load_domains_from_txt(ctx.fixed_black_shield, "/tmp/ai_blacklist.txt", LOG_MANUAL_BLOCK, -1);
+  load_domains_from_txt(ctx.fixed_white_shield, "/tmp/ai_whitelist.txt", LOG_MANUAL_PASS, -1);
 
   // 스레드 가동
   pthread_t uds_tid, clean_tid, log_tid;

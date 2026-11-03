@@ -97,13 +97,18 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
   
 
     /* ==================================================================
-        [수술 구간] O(1) 해시 테이블 타격 + AI 실시간 UDS 검사 연동
+               O(1) 해시 테이블 타격 + AI 실시간 UDS 검사 연동
         ================================================================== */
-
-    // 1. 현재 쥐고 있는 블랙 방패(블랙 해시테이블) 0초 컷으로 검색
-    // A. 1차 방어선: 화이트 방패 검색 (0초 컷 통과)
+  
+    //동적 방패 (관리자 수동 조작 또는 AI 실시간 판정) 먼저 검사
     HashNode* white_node = lookup_hash_table(ctx->white_manager.active_shield, check_site);
     HashNode* black_node = lookup_hash_table(ctx->black_manager.active_shield, check_site);
+
+    //화이트,블랙 동적방패에 둘다 없으면 고정 방패 두번째로 검사
+    if (white_node == NULL && black_node == NULL) {
+        white_node = lookup_hash_table(ctx->fixed_white_shield, check_site);
+        black_node = lookup_hash_table(ctx->fixed_black_shield, check_site);
+    }
 
     if (white_node != NULL) {
       printf("[디버그] 화이트 방패 발견! 도메인: %s / 계급(type): %d\n", white_node->domain, white_node->block_type);
