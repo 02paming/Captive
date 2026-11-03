@@ -7,10 +7,12 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
   pcap_t *handle_inject = ctx->inject_handle;
 
+  if (header->caplen < sizeof(struct ether_header)) return;
   struct ether_header *ethernet = (struct ether_header *)packet;
   if (ntohs(ethernet->ether_type) != ETHERTYPE_IP)
     return;
 
+  if (header->caplen < sizeof(struct ether_header) + sizeof(struct ip)) return;
   struct ip *ip = (struct ip *)(packet + sizeof(struct ether_header));
   int ip_size = ip->ip_hl * 4;
 
@@ -32,6 +34,7 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
   //IP 헤더의 프로토콜 필드(ip_p)를 확인하여 길을 나눔
   if (ip->ip_p == IPPROTO_TCP) {
+    if (header->caplen < sizeof(struct ether_header) + ip_size + sizeof(struct tcphdr)) return;
     tcp = (struct tcphdr *)((u_char *)ip + ip_size);
     int tcp_size = tcp->th_off * 4;
     payload = (u_char *)tcp + tcp_size;
@@ -68,7 +71,8 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
     
     // QNAME 디코딩: 3www5naver3com0 -> www.naver.com 변환 루프
     int i = 0, j = 0;
-    while (qname[i] != 0 && j < sizeof(check_site) - 1) {
+    int max_qname_len = payload_size - 12;
+    while (i < max_qname_len && qname[i] != 0 && j < sizeof(check_site) - 1) {
       int label_len = qname[i]; // 첫 바이트는 다음 단어의 길이 (예: 3)
       i++; // 길이 바이트 건너뛰고 글자 시작 위치로 이동
       

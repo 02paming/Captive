@@ -6,7 +6,7 @@ void *uds_server_thread(void *arg) {
 
   int client_fd;
   struct sockaddr_un addr;
-  char buffer[128]; // 명령어 처리를 위해 버퍼를 약간 여유있게 늘림
+  char buffer[512]; // 명령어 처리를 위해 버퍼를 약간 여유있게 늘림
 
   ctx->server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
   printf("[UDS 스레드] 방금 만든 소켓 번호: %d\n", ctx->server_fd);

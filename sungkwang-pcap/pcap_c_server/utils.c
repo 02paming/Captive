@@ -212,6 +212,12 @@ int pop_ai_queue(EngineContext *ctx, char* out_domain) {
 
 // AI에게 도메인을 묻고 결과를 반환 (1 = BLACK, 2 = BLACK_DOUBT, 3 = WHITE_DOUBT , 4 = WHITE)
 int ask_ai_domain_status(const char* domain, double* out_score) {
+  
+  // 매개변수 포인터 유효성 검사 추가
+    if (domain == NULL || out_score == NULL) {
+        return LOG_AI_PASS; // 안전하게 통과 처리 (Fail-Open)
+    }
+
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock == -1) return LOG_AI_PASS; // 소켓 생성 실패 시 안전을 위해 PASS 처리 (Fail-Open)
 

@@ -28,33 +28,6 @@
 
 #include "pcap_project.h"
 
-// 디바이스와 핸들을 하나로 묶어 관리
-typedef struct Device {
-  pcap_if_t *dev;
-  pcap_t *handle;
-} Device;
-
-// 이곳은 전역변수 세팅하는곳으로 시작하자마자 데이터세그먼트영역에
-// 메모리올리는것(extern로 헤더에 다른파일에서도 쓰겠다고 명시되어있음)
-// AuthRecord whitelist[256] = {0};
-// pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-// pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-// volatile sig_atomic_t keep_running = 1;
-// int server_fd = -1;
-// pcap_t *handle = NULL;  // 추후에 그냥 여기쓸거 구조체변수를 전역으로 빼볼생각 (코드정리)
-//                         // 지금 devices[0].handle를 시그널함수에 가져다 못쓰기때문에(main함수에서
-//                         // 구조체변수로만들어진놈이라 stack영역으로 지역변수임)
-// uint8_t latest_mac_cache[256][6] = {0};
-// SharedLogQueue log_queue = {0};
-// AIQueue ai_queue = {0};
-
-// // 여기서 전역변수 정의해서 메모리에올림이제 다른곳에서 그냥 변수쓰면됨
-// // 더블 버퍼링기법을 활용
-// DoubleBufferManager black_manager = {0};
-// DoubleBufferManager white_manager = {0};
-
-//이제 메인스택에 선언후 다 이 메모리를 포인터로써 써먹는 구조로 개편
-//시그널 핸들러에서 안전한 종료 처리를 위해 오직 하나의 포인터만 전역으로
 EngineContext *g_ctx = NULL;
 
 /*!
@@ -132,67 +105,52 @@ int main(void) {
   char filter_exp[] = "src net 192.168.2.0 mask 255.255.255.0 and"
                       "(tcp dst port 80 or udp dst port 53) and dst host not 192.168.3.243";
 
-  pcap_if_t *alldevs, *target;
-  Device devices[3] = {0,};
+  //환경에따라서 인터페이스 순서가 변경되면 이상한 인터페이스가지고 놀수도있으니 하드코딩으로 바꿈
+  const char *mir_dev = "eno2";    // 미러링 패킷 캡처용
+  const char *inject_dev = "eno4"; // 차단 패킷 인젝션용      
+               
 
-  // 1. 전체 디바이스 목록 검색 (alldevs에는 다 이시점에서 들어감 순회로)
-  if (pcap_findalldevs(&alldevs, errbuf) == -1 || alldevs == NULL) {
-    fprintf(stderr, "Error finding devices: %s\n", errbuf);
+  ctx.mir_handle = pcap_open_live(mir_dev, BUFSIZ, 1, 1, errbuf);
+  if (ctx.mir_handle == NULL) {
+    fprintf(stderr, "캡처 디바이스(%s)를 열 수 없습니다: %s\n", mir_dev, errbuf);
     return 1;
   }
 
-  // 2. 버퍼 누수 이슈로 하나 대신해서 할당시킬 target지정
-  target = alldevs;
-
-  // eno2부터니까 일단 for문대신 두번 next
-  target = target->next;
-  target = target->next;
-
-  // 3. 만든 구조체 배열에 디바이스 정보 할당
-  for (int i = 0; i < 3; i++) {
-    if (target == NULL) {
-      fprintf(stderr, "Error: Not enough devices found!\n");
-      pcap_freealldevs(alldevs);
-      return 1;
-    }
-    devices[i].dev = target;
-    target = target->next;
-  }
-
-
-  target = target->next;
-  printf("mirror(캡쳐용) Device : %s\n", devices[0].dev->name);
-  printf("Inject(인젝션용) Device  : %s\n", devices[2].dev->name);
-
-  devices[0].handle = pcap_open_live(devices[0].dev->name, BUFSIZ, 1, 1, errbuf);
-  devices[2].handle = pcap_open_live(devices[2].dev->name, BUFSIZ, 0, 0, errbuf);
-
-  if (devices[0].handle == NULL || devices[2].handle == NULL) {
-    fprintf(stderr, "디바이스를 열 수 없습니다.\n");
-    pcap_freealldevs(alldevs);
+  ctx.inject_handle = pcap_open_live(inject_dev, BUFSIZ, 0, 0, errbuf);
+  if (ctx.inject_handle == NULL) {
+    fprintf(stderr, "인젝션 디바이스(%s)를 열 수 없습니다: %s\n", inject_dev, errbuf);
+    pcap_close(ctx.mir_handle); // 먼저 열었던 캡처 핸들 닫기
     return 1;
   }
 
-  pcap_setdirection(devices[0].handle, PCAP_D_IN);
-  pcap_setdirection(devices[2].handle, PCAP_D_OUT);
-
-  ctx.mir_handle = devices[0].handle;
-  ctx.inject_handle = devices[2].handle;
+  pcap_setdirection(ctx.mir_handle, PCAP_D_IN);
+  pcap_setdirection(ctx.inject_handle, PCAP_D_OUT);
 
   if (pcap_datalink(ctx.mir_handle) != DLT_EN10MB) {
     fprintf(stderr, "이더넷 장비가 아닙니다!\n");
     pcap_close(ctx.mir_handle);
     pcap_close(ctx.inject_handle);
-    pcap_freealldevs(alldevs);
+    return 1;
+  }
+  if (pcap_datalink(ctx.inject_handle) != DLT_EN10MB) {
+    fprintf(stderr, "이더넷 장비가 아닙니다!\n");
+    pcap_close(ctx.mir_handle);
+    pcap_close(ctx.inject_handle);
     return 1;
   }
 
-  if (pcap_compile(ctx.mir_handle, &filter, filter_exp, 0, PCAP_NETMASK_UNKNOWN) == -1 || 
-    pcap_setfilter(ctx.mir_handle, &filter) == -1) {
-    fprintf(stderr, "필터 설정 실패.\n");
+ if (pcap_compile(ctx.mir_handle, &filter, filter_exp, 0, PCAP_NETMASK_UNKNOWN) == -1) {
+    fprintf(stderr, "필터 컴파일 실패: %s\n", pcap_geterr(ctx.mir_handle));
     pcap_close(ctx.mir_handle);
     pcap_close(ctx.inject_handle);
-    pcap_freealldevs(alldevs);
+    return 1;
+  }
+
+  if (pcap_setfilter(ctx.mir_handle, &filter) == -1) {
+    fprintf(stderr, "필터 적용 실패: %s\n", pcap_geterr(ctx.mir_handle));
+    pcap_freecode(&filter); 
+    pcap_close(ctx.mir_handle);
+    pcap_close(ctx.inject_handle);
     return 1;
   }
 
@@ -264,8 +222,8 @@ int main(void) {
   pcap_loop(ctx.mir_handle, 0, packet_handler, (u_char *)&ctx);
 
   // 자원반납(역순)
-  pcap_close(devices[0].handle);
-  pcap_close(devices[2].handle);
+  pcap_close(ctx.inject_handle);
+  pcap_close(ctx.mir_handle);
 
 
   
@@ -287,7 +245,6 @@ int main(void) {
   pthread_mutex_destroy(&ctx.log_queue.queue_lock);
   pthread_cond_destroy(&ctx.log_queue.log_cond);
 
-  pcap_freealldevs(alldevs);
 
   if (ctx.black_manager.shield_A) free_hash_table(ctx.black_manager.shield_A); 
   if (ctx.black_manager.shield_B) free_hash_table(ctx.black_manager.shield_B);
