@@ -5,6 +5,8 @@ import os
 import time
 from flask import Flask, request, render_template, jsonify, abort
 
+
+
 app = Flask(__name__)
 # 0. 내부 ai프로세스와 통신
 CONFIG_SOCKET_PATH = "/tmp/ai_config.sock"
@@ -31,6 +33,15 @@ API_WEB_ACCESS_LOG = "http://192.168.3.23:8080/api/web_access_log"  # 인증된�
 
 # C 엔진이 발급한 일회용 토큰을 임시 저장할 메모리 공간
 valid_tokens = set()
+
+#로그 병목현상 해결을 위한 100개모아쏘거나 1초뒤쏘기
+BATCH_SIZE = 100          # 100개가 모이면 즉시 전송
+BATCH_INTERVAL_SEC = 1.0  # 1초가 지나면 무조건 전송
+
+log_buffer_white = []
+log_buffer_black = []
+buffer_lock = threading.Lock()
+last_flush_time = time.time()
 
 
 # =========================================================================
@@ -361,8 +372,41 @@ def send_host_id_via_uds(command, auth_payload):
   finally:
     client_socket.close()
 
-# 웹서버 백엔드(192.168.3.23)가 쏴주는 데이터를 받는 곳
+def flush_logs():
+    """타이머나 개수가 찼을 때 쌓인 로그를 pcap백엔드로 한 방에 전송"""
+    global log_buffer_white, log_buffer_black, last_flush_time
+    
+    with buffer_lock:
+        whites_to_send = log_buffer_white[:]
+        blacks_to_send = log_buffer_black[:]
+        log_buffer_white.clear()
+        log_buffer_black.clear()
+        last_flush_time = time.time()
+        
+    # WHITE 로그 묶음 전송
+    if whites_to_send:
+        try:
+            requests.post(API_WEB_ACCESS_LOG, json={"logs": whites_to_send}, timeout=5)
+            print(f"[배치 전송] WHITE 로그 {len(whites_to_send)}개 묶음 전송 완료")
+        except Exception as e:
+            print(f"[API 벌크 전달 실패 - WHITE]: {e}")
+            
+    # BLACK 로그 묶음 전송
+    if blacks_to_send:
+        try:
+            requests.post(API_BLACKLIST_LOG, json={"logs": blacks_to_send}, timeout=5)
+            print(f"[배치 전송] BLACK 로그 {len(blacks_to_send)}개 묶음 전송 완료")
+        except Exception as e:
+            print(f"[API 벌크 전달 실패 - BLACK]: {e}")
 
+def batch_timer_thread():
+    """1초마다 로그 배열을 검사해서 쌓인 게 있으면 비워주는 백그라운드 타이머"""
+    while True:
+        time.sleep(BATCH_INTERVAL_SEC)
+        if len(log_buffer_white) > 0 or len(log_buffer_black) > 0:
+            flush_logs()
+
+# 웹서버 백엔드(192.168.3.23)가 쏴주는 데이터를 받는 곳
 # 추가 인증초기화 usd 서버 역할의 함수 (백엔드로쏴서 인증테이블 db 행 삭제용(혹은 status 업데이트로갈건지 추후 상의))
 def gc_uds_server():
   # 여기 웹서버 프로세스 재시작할때 기존에 쓰던 GC_SOCKET_PATH의 파일이 남아있으면 bind()때 이미사용중이라고 에러발생 대비
@@ -428,16 +472,13 @@ def handle_uds_client(conn):
             "target_url": target_url,
             "ai_score": ai_score
         }
-        print(data)
+        # print(data)
+
         print(f"[UDS 수신] 웹 접속 로그 -> {client_ip} ({target_url})")
-        try:
-          response = requests.post(
-              API_WEB_ACCESS_LOG,
-              json=data,
-              timeout=3
-          )
-        except Exception as e:
-          print(f"[API 전달 실패] 로그 저장 오류: {e}")
+        with buffer_lock:
+            log_buffer_white.append(data)
+            if len(log_buffer_white) >= BATCH_SIZE:
+                threading.Thread(target=flush_logs, daemon=True).start()
 
       elif command == "BLACK" and len(parts) >= 5:
         client_ip = parts[1]
@@ -451,19 +492,14 @@ def handle_uds_client(conn):
             "target_url": target_url,
             "ai_score": ai_score
         }
-        print(data)
+        # print(data)
         print(f"\n[UDS 수신] 블랙 접속 로그 (DB 업데이트 요청) -> IP: {client_ip} / 도메인: {target_url}")
-        
-        # 2. 파일 쓰기 대신 백엔드의 /api/ai_block API로 POST 전송
-        try:
-            response = requests.post(
-                API_BLACKLIST_LOG, 
-                json=data,
-                timeout=3
-            )
-            print(f"   [API 전달 성공] DB에 AI 차단 도메인 반영 완료")
-        except Exception as e:
-            print(f"   [API 전달 실패] DB 업데이트 오류: {e}")
+
+        with buffer_lock:
+            log_buffer_black.append(data)
+            if len(log_buffer_black) >= BATCH_SIZE:
+                threading.Thread(target=flush_logs, daemon=True).start()
+       
   finally:
     conn.close()
 
@@ -519,4 +555,5 @@ if __name__ == "__main__":
   threading.Thread(target=gc_uds_server, daemon=True).start()  # 로깅 & 만료 처리
   threading.Thread(target=token_uds_server, daemon=True).start() # 토큰 수신 
   threading.Thread(target=master_sync_thread, daemon=True).start() # 무적 동기화 
+  threading.Thread(target=batch_timer_thread, daemon=True).start()
   app.run(host="0.0.0.0", port=80)

@@ -224,7 +224,7 @@ int ask_ai_domain_status(const char* domain, double* out_score) {
     // 소켓 타임아웃 설정 (AI 서버가 죽었을 때 C엔진이 멈추는 것 방지, 10ms 한계)
     struct timeval tv;
     tv.tv_sec = 0;
-    tv.tv_usec = 500000; // 10ms (0.01초)
+    tv.tv_usec = 1000000; 
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 
@@ -414,10 +414,11 @@ void clear_hash_table(HashTable* ht) {
 
 // 5. 방패 폐기 (RELOAD 스위칭 후 쓸모없어진 옛날 방패를 메모리에서 날려버림)
 void free_hash_table(HashTable *ht) {
+    pthread_mutex_destroy(&ht->shield_lock);
     if (!ht) return;
 
     clear_hash_table(ht);
-
+    pthread_mutex_destroy(&ht->shield_lock);
     free(ht); // 방패 본체 해제
 }
 

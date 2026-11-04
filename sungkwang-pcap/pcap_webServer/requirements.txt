@@ -13,6 +13,7 @@ numpy==2.0.2
 python-dateutil==2.9.0.post0
 pytz==2026.5
 requests==2.32.5
+scapy==2.8.0
 scipy==1.13.1
 six==1.17.0
 threadpoolctl==3.7.0
@@ -20,5 +21,3 @@ tzdata==2026.5
 urllib3==2.6.3
 Werkzeug==3.1.9
 zipp==3.23.1
-
-#pip install -r requirements.txt 추후 파이썬 설치하고 가상환경설치후 그곳에서 이 명령어실행하면 라이브러리 다깔림

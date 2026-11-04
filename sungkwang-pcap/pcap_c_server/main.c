@@ -123,7 +123,7 @@ int main(void) {
     return 1;
   }
 
-  pcap_setdirection(ctx.mir_handle, PCAP_D_IN);
+  pcap_setdirection(ctx.mir_handle, PCAP_D_INOUT); //패킷발생기 테스트때는 이렇게해야함
   pcap_setdirection(ctx.inject_handle, PCAP_D_OUT);
 
   if (pcap_datalink(ctx.mir_handle) != DLT_EN10MB) {
@@ -250,6 +250,8 @@ int main(void) {
   if (ctx.black_manager.shield_B) free_hash_table(ctx.black_manager.shield_B);
   if (ctx.white_manager.shield_A) free_hash_table(ctx.white_manager.shield_A); 
   if (ctx.white_manager.shield_B) free_hash_table(ctx.white_manager.shield_B);
+  if(ctx.fixed_black_shield) free_hash_table(ctx.fixed_black_shield);
+  if(ctx.fixed_white_shield) free_hash_table(ctx.fixed_white_shield);
 
   printf("\nLoop 이후 자원반납 깔끔하게 싹 하고 return 0 됨\n");
 

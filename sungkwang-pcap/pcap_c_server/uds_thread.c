@@ -97,7 +97,7 @@ void *uds_server_thread(void *arg) {
             HashTable *old_active_shield = (standby_shield == target_manager->shield_A) ? target_manager->shield_B : target_manager->shield_A;
 
             if (is_add) {
-                insert_hash_table(old_active_shield, domain, log_type, -1);
+                insert_hash_table(old_active_shield, domain, log_type, ai_score);
             } else {
                 delete_from_hash_table(old_active_shield, domain);
             }
