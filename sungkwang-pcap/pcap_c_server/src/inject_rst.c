@@ -1,4 +1,5 @@
-#include "pcap_project.h"
+#include "pcap_common.h"
+#include "pcap_utils.h"
 
 void inject_rst(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size)
 {

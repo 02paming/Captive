@@ -1,4 +1,5 @@
-#include "pcap_project.h"
+#include "pcap_common.h"
+#include "pcap_utils.h"
 
 void* clean_thread(void* arg) {
   EngineContext *ctx = (EngineContext *)arg;

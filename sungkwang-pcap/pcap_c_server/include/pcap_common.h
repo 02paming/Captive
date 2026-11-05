@@ -1,3 +1,6 @@
+#ifndef PCAP_COMMON_H
+#define PCAP_COMMON_H
+
 #define _DEFAULT_SOURCE
 #define __USE_BSD
 #define _GNU_SOURCE       // memmem 같은 GNU 확장 함수를 쓰겠다고 선언
@@ -146,19 +149,6 @@ typedef struct {
 } EngineContext;
 
 
-// extern DoubleBufferManager black_manager;
-// extern DoubleBufferManager white_manager;
-// extern AuthRecord whitelist[256];
-// extern pthread_mutex_t lock;
-// extern pthread_cond_t cond;
-// extern volatile sig_atomic_t keep_running;
-// extern int server_fd;
-// extern pcap_t *handle;
-// extern uint8_t latest_mac_cache[256][6];
-// extern SharedLogQueue log_queue;
-// extern AIQueue ai_queue;
-
-
 // TCP Checksum 계산을 위한 가상 헤더 구조체
 typedef struct {
   u_int32_t source_address;
@@ -168,95 +158,4 @@ typedef struct {
   u_int16_t tcp_length;
 } Pseudo_header;
 
-//함수 리모델링
-void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u_char *packet);
-unsigned short csum(unsigned short *ptr, int nbytes);
-
-// UDS 통신부
-void uds_client_sock(const int ip);
-void uds_client_sock_log(const LogPacket* local_log);
-void send_to_uds(const char* message);
-void send_token(u_int token); // 토큰 전송
-
-// IP/MAC 검증 (전역변수 대신 ctx 사용)
-int packet_mac_check(EngineContext *ctx, const int host_id, const uint8_t* packet_mac);
-
-// 백그라운드 스레드 함수들 (모두 인자로 EngineContext 포인터를 받음)
-void* uds_server_thread(void* arg);
-void* clean_thread(void* arg); // (추후 expire_thread 로직으로 개조)
-void* ai_worker_thread(void* arg);
-void* log_thread(void* arg);
-void* domain_sync_thread(void* arg); //도메인 스트리밍
-
-// 큐 제어 (전역변수 대신 ctx 사용)
-void push_to_log_queue(EngineContext *ctx, const char* ip, const char* domain, int is_blocked_flag, double score);
-int pop_log_queue(EngineContext *ctx, LogPacket* out_log);
-void push_to_ai_task_queue(EngineContext *ctx, const char *domain);
-int pop_ai_queue(EngineContext *ctx, char* out_domain);
-int ask_ai_domain_status(const char* domain, double* out_score);
-
-// 해시 테이블 
-unsigned long hash_djb2(const char *str);
-HashTable* create_hash_table();
-void insert_hash_table(HashTable *ht, const char *domain, int block_type, double score);
-int delete_from_hash_table(HashTable *ht, const char *domain);
-HashNode* lookup_hash_table(HashTable *ht, const char *domain);
-void free_hash_table(HashTable *ht);
-void clear_hash_table(HashTable* ht);
-void load_domains_from_txt(HashTable *ht, const char *filepath, int block_type, double score);
-
-// 인젝션 
-void inject_redirect_blocked(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token);
-void inject_rst(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size);
-
-// 일회용 토큰 및 밴 안내창 인젝션 함수 원형
-void inject_redirect_token(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token);
-void inject_redirect_ban(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token, const char* reason);
-
-
-// 기능별 함수 원형 선언
-// void packet_handler(u_char *args, const struct pcap_pkthdr *header,
-//                     const u_char *packet);
-// unsigned short csum(unsigned short *ptr, int nbytes);
-
-// void uds_client_sock(const int ip);
-// void uds_client_sock_log(const LogPacket* local_log);
-// void send_to_uds(const char* message);
-
-// int packet_mac_check(const int host_id, const uint8_t* packet_mac);
-
-// void* uds_server_thread(void* arg);
-// void* clean_thread(void* arg);
-// void* ai_worker_thread(void* arg);
-// void* log_thread(void* arg);
-// void push_to_log_queue(const char* ip, const char* domain, int is_blocked_flag, double score);
-// int pop_log_queue(LogPacket* out_log);
-// void push_to_ai_task_queue(const char *domain);
-// int pop_ai_queue(char* out_domain);
-// int ask_ai_domain_status(const char* domain, double* out_score);
-
-// //해쉬테이블쪽
-// unsigned long hash_djb2(const char *str);
-// HashTable* create_hash_table();
-// void insert_hash_table(HashTable *ht, const char *domain, int block_type, double score);
-// int delete_from_hash_table(HashTable *ht, const char *domain);
-// HashNode* lookup_hash_table(HashTable *ht, const char *domain);
-// void free_hash_table(HashTable *ht);
-// void clear_hash_table(HashTable* ht);
-// void load_domains_from_txt(HashTable *ht, const char *filepath,int block_type, double score);
-
-
-
-// // 인젝션 함수 모듈화
-// void inject_redirect(pcap_t *handle_inject, const struct ether_header *ethernet,
-//                      const struct ip *ip, const struct tcphdr *tcp,
-//                      uint32_t payload_size);
-
-// void inject_redirect_blocked(pcap_t *handle_inject, const struct ether_header *ethernet, 
-//                       const struct ip *ip, const struct tcphdr *tcp,
-//                       uint32_t payload_size);
-
-
-// void inject_rst(pcap_t *handle_inject, const struct ether_header *ethernet,
-//                 const struct ip *ip, const struct tcphdr *tcp,
-//                 uint32_t payload_size);
+#endif

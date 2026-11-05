@@ -1,0 +1,9 @@
+패킷발생기 테스트시 c엔진에서 임시 수정해야할점 
+1. main.c에 pcap셋디렉션 부분 in에서 inout으로 수정
+
+기존 in이었을때는 no2 랜카드로 외부에서 들어오는(IN) 패킷만 감시하고 있었지만
+
+
+같은 컴퓨터(서버) 안에서 eno2 랜카드를 통해 패킷을 밖으로 발송(OUT)하고 있는 패킷발생기구조를 쓰려면
+
+pcap_setdirection(ctx.mir_handle, PCAP_D_INOUT); 이렇게 수정해야함

@@ -1,4 +1,6 @@
-#include "pcap_project.h"
+#include "pcap_common.h"
+#include "hash_manager.h"
+#include "pcap_utils.h"
 
 // time_t last_time[256] = {0}; // IP별 마지막 접속 시간(초) 기록
 

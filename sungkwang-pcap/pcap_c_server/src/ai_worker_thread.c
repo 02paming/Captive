@@ -1,9 +1,8 @@
-#include "pcap_project.h"
+#include "pcap_common.h"
+#include "thread_workers.h"
+#include "hash_manager.h"
+#include "pcap_utils.h"
 
-typedef struct {
-  EngineContext *ctx_ptr;
-  int id;
-} WorkerArgs;
 
 void* ai_worker_thread(void* arg) {
 

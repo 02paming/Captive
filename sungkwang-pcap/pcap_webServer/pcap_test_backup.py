@@ -3,6 +3,7 @@ import requests  # 서버 간 HTTP 통신을 위한 라이브러리 추가
 import threading  # uds 서버역할의 스레드를 백그라운드로 하나돌리기위함
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, render_template, jsonify, abort
 
 
@@ -35,6 +36,9 @@ API_WEB_ACCESS_LOG = "http://192.168.3.23:8080/api/web_access_log"  # 인증된�
 valid_tokens = set()
 
 #로그 병목현상 해결을 위한 100개모아쏘거나 1초뒤쏘기
+#로그 스레드풀 생성
+executor = ThreadPoolExecutor(max_workers=10)
+
 BATCH_SIZE = 100          # 100개가 모이면 즉시 전송
 BATCH_INTERVAL_SEC = 1.0  # 1초가 지나면 무조건 전송
 
@@ -416,19 +420,19 @@ def gc_uds_server():
 
   server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
   server.bind(GC_LOG_SOCKET_PATH)
-  server.listen(5)
+  server.listen(100)
   # os.chmod(GC_SOCKET_PATH, 0o666) 클라 , 서버 둘다 root 이기때문에 굳이 필요없음
 
   print(f"[UDS 서버] C 프로그램(GC,LOG) 통보 대기 중... ({GC_LOG_SOCKET_PATH})")
 
   while True:
-    conn, _ = server.accept()  # 소켓fd와 , 주소 튜플로반환
-    print("수신성공!!!!")
+        try:
+            conn, _ = server.accept()
+            # 2. 스레드풀에 할 일을 넣기
+            executor.submit(handle_uds_client, conn)
+        except Exception as e:
+            print(f"[UDS 서버 accpet 에러] {e}")
 
-    # 비동기로 할일 줘버림 이 구조를 기존 c의 uds수신쪽에도해야하나했지만 여기는 db와 통신하는곳이기때문에 병목이올수있어서 이곳에는 추가함
-    client_thread = threading.Thread(target=handle_uds_client, args=(conn,))
-    client_thread.daemon = True  # 메인 스레드 종료 시 함께 종료
-    client_thread.start()
 
 
 # gc_uds_server쓰레드속 할일만 따로뺀 쓰레드

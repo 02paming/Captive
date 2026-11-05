@@ -1,4 +1,5 @@
-#include "pcap_project.h"
+#include "pcap_common.h"
+#include "pcap_utils.h"
 
 void* log_thread(void* arg) {
 
