@@ -92,7 +92,7 @@ void inject_redirect_ban(pcap_t *handle_inject, const struct ether_header *ether
 
     snprintf(redirectMsg, sizeof(redirectMsg),
              "HTTP/1.1 302 Found\r\n"
-             "Location: http://192.168.3.243/ban?token=%u&reason=%s\r\n"
+             "Location: http://192.168.3.243:5000/ban?token=%u&reason=%s\r\n"
              "Content-Length: 0\r\n"
              "Connection: close\r\n"
              "\r\n", token, reason);
@@ -139,7 +139,7 @@ void inject_redirect_blocked(pcap_t *handle_inject, const struct ether_header *e
     memset(redirectMsg, 0, sizeof(redirectMsg));
     snprintf(redirectMsg, sizeof(redirectMsg),
             "HTTP/1.1 302 Found\r\n"
-            "Location: http://192.168.3.243/blocked?url=%s&ip=%s&token=%u\r\n"
+            "Location: http://192.168.3.243:5000/blocked?url=%s&ip=%s&token=%u\r\n"
             "Content-Length: 0\r\n"
             "Connection: close\r\n"
             "\r\n",
@@ -159,7 +159,7 @@ void inject_redirect_token(pcap_t *handle_inject, const struct ether_header *eth
 
     snprintf(redirectMsg, sizeof(redirectMsg),
              "HTTP/1.1 302 Found\r\n"
-             "Location: http://192.168.3.243/?token=%u\r\n"
+             "Location: http://192.168.3.243:5000/?token=%u\r\n"
              "Content-Length: 0\r\n"
              "Connection: close\r\n"
              "\r\n", token);

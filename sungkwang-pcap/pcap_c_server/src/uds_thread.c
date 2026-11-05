@@ -28,6 +28,9 @@ void *uds_server_thread(void *arg) {
     close(ctx->server_fd);
     return NULL;
   }
+  if (chmod(SOCKET_PATH, 0666) == -1) {
+    perror("chmod 오류");
+}
 
   if (listen(ctx->server_fd, 5) < 0) {
     perror("UDS 리슨 실패");

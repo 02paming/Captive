@@ -42,6 +42,7 @@ void uds_client_sock_log(const LogPacket* local_log){
   else if(local_log->is_ai_blocked == 2 || local_log->is_ai_blocked == 5 || local_log->is_ai_blocked == 6) {
     sprintf(msg, "WHITE|%s|%s|%d|%.2f", local_log->client_ip, local_log->target_host, local_log->is_ai_blocked,local_log->ai_score);
   }
+  
 
   send_to_uds(msg);
 }
@@ -132,7 +133,7 @@ void push_to_log_queue(EngineContext *ctx, const char* ip, const char* domain, i
     LogPacket log_data;
     memset(&log_data, 0, sizeof(LogPacket));
     
-    strncpy(log_data.client_ip, ip, sizeof(log_data.client_ip - 1));
+    strcpy(log_data.client_ip, ip);
     strncpy(log_data.target_host, domain, sizeof(log_data.target_host) - 1);
     log_data.is_ai_blocked = is_blocked_flag; 
     log_data.ai_score = score;
