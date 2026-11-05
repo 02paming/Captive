@@ -700,6 +700,68 @@ ALTER TABLE blacklist_addr
 ADD COLUMN ai_score DOUBLE DEFAULT -1.0 COMMENT 'AI 판별 점수';
 
 
+-- 261105
+-- 온라인 IP 유니크, 회원상태컬럼추가와 상태 테이블 분리, 블랙/화이트리스트 FK 감사 로그
+
+USE internal_db;
+
+-- 1. 안전한 구조 변경을 위해 외래키 검사 임시 해제
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- ==============================================================
+-- [1] online_list: IP 중복 접속 방지 (유니크 키 추가)
+-- ==============================================================
+ALTER TABLE `online_list` 
+ADD UNIQUE INDEX `idx_unique_online_ip` (`online_ip`) COMMENT '단일 IP에는 하나의 세션만 존재하도록 강제';
+
+-- ==============================================================
+-- [2] employee_status_codes: 회원 상태 관리 참조 테이블 신규 생성
+-- ==============================================================
+CREATE TABLE IF NOT EXISTS `employee_status_codes` (
+    `status_code` INT NOT NULL COMMENT '상태 코드 (PK)',
+    `status_name` VARCHAR(50) NOT NULL COMMENT '시스템 영문 상태명 (예: ACTIVE)',
+    `display_name` VARCHAR(50) NOT NULL COMMENT '프론트엔드 표시용 한글명 (예: 정상)',
+    `description` VARCHAR(255) DEFAULT NULL COMMENT '상태에 대한 상세 설명',
+    PRIMARY KEY (`status_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 초기 상태 데이터 삽입 (기존 데이터 중복 삽입 방지를 위해 IGNORE 사용)
+INSERT IGNORE INTO `employee_status_codes` (`status_code`, `status_name`, `display_name`, `description`) VALUES
+(10, 'ACTIVE', '정상', '일반적인 정상 이용 상태'),
+(20, 'VACATION', '휴가중', '휴가로 인한 사내망 일시 접근 제한'),
+(30, 'BANNED', '이용정지', '보안 위반 등으로 인한 강제 접근 차단'),
+(40, 'LEAVE_OF_ABSENCE', '휴직', '장기 휴직 상태'),
+(90, 'RESIGNED', '퇴사', '퇴사자 계정');
+
+-- ==============================================================
+-- [3] employees: 상태 코드 컬럼 추가 및 외래키 연결
+-- ==============================================================
+ALTER TABLE `employees`
+ADD COLUMN `status_code` INT NOT NULL DEFAULT 10 COMMENT '사원 상태 코드 (employee_status_codes 참조)' AFTER `is_manager`,
+ADD CONSTRAINT `fk_emp_status` FOREIGN KEY (`status_code`) REFERENCES `employee_status_codes`(`status_code`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- ==============================================================
+-- [4] whitelist_addr: 관리자 수동 정책 이력(Audit) 컬럼 및 외래키 추가
+-- ==============================================================
+ALTER TABLE `whitelist_addr`
+ADD COLUMN `added_by_emp_id` INT DEFAULT NULL COMMENT '수동 추가한 관리자의 사원번호 (employees 참조)',
+ADD COLUMN `description` VARCHAR(255) DEFAULT NULL COMMENT '수동 등록 사유 / 도메인 설명',
+ADD COLUMN `added_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '정책 추가 시간',
+ADD CONSTRAINT `fk_whitelist_added_by` FOREIGN KEY (`added_by_emp_id`) REFERENCES `employees`(`employee_number`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- ==============================================================
+-- [5] blacklist_addr: 관리자 수동 정책 이력(Audit) 컬럼 및 외래키 추가
+-- ==============================================================
+ALTER TABLE `blacklist_addr`
+ADD COLUMN `added_by_emp_id` INT DEFAULT NULL COMMENT '수동 추가한 관리자의 사원번호 (employees 참조)',
+ADD COLUMN `description` VARCHAR(255) DEFAULT NULL COMMENT '수동 차단 사유 / 도메인 설명',
+ADD COLUMN `added_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '정책 추가 시간',
+ADD CONSTRAINT `fk_blacklist_added_by` FOREIGN KEY (`added_by_emp_id`) REFERENCES `employees`(`employee_number`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- 2. 모든 변경이 끝났으므로 외래키 검사 원상 복구
+SET FOREIGN_KEY_CHECKS = 1;
+
+
 -- 6.자동 삭제 스케줄러 업데이트
 -- 삭제된 테이블(dga_detection_log, blacklist_addr_access_log)이 스케줄러에서 에러를 유발하지 않도록 제외합니다.
 DELIMITER $$

@@ -75,7 +75,7 @@ EngineContext *g_ctx = NULL;
  */
 int main(void) {
     srand(time(NULL));
-    int ret_code = 0;
+    int ret_code = 0; //리턴코드 기존에 그냥 return 1 이나 0했던거 변수화한것
     EngineContext ctx = {0};
     
     pthread_t uds_tid = 0, clean_tid = 0, log_tid = 0;
@@ -87,7 +87,7 @@ int main(void) {
 
     // 1. 초기화 (실패 시 즉시 cleanup으로 점프)
     if (init_context(&ctx) != 0) {
-        ret_code = 1; goto cleanup;
+        ret_code = 1; goto cleanup; //패킷핸들러함수때 정상일때 goto문 쓴것처럼 활용
     }
     //ctx멤버변수들 초기화 후 전역변수 초기화
     g_ctx = &ctx;
