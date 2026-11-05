@@ -1,7 +1,7 @@
 # 파일명: .gitignore
 # 역할: Git이 변경사항을 추적할 때 무시(제외)할 파일과 폴더 목록을 지정합니다.
 
-# c엔진 실행파일인 my_pcap_app
+# c엔진 실행파일인 my_pcap_app.
 my_pcap_app
 
 
