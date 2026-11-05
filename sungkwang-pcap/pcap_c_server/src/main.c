@@ -104,7 +104,7 @@ int main(void) {
     }
 
     printf("\n========= [시스템] Django/Flask 초기 동기화 요청 중 =========\n");
-    system("/root/intranet-access-controller/sungkwang-pcap/pcap_webServer/venv/bin/python /root/intranet-access-controller/sungkwang-pcap/pcap_webServer/sync_runner.py &");
+    system("/opt/captive_project/intranet-access-controller/sungkwang-pcap/pcap_webServer/venv/bin/python /opt/captive_project/intranet-access-controller/sungkwang-pcap/pcap_webServer/sync_runner.py &");
     printf("[시스템] 백그라운드 동기화 셋업 완료! PCAP 패킷 감시를 시작합니다.\n\n");
 
     if (pthread_create(&clean_tid, NULL, clean_thread, &ctx) != 0) {

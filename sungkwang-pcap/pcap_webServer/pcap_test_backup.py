@@ -560,4 +560,4 @@ if __name__ == "__main__":
   threading.Thread(target=token_uds_server, daemon=True).start() # 토큰 수신 
   threading.Thread(target=master_sync_thread, daemon=True).start() # 무적 동기화 
   threading.Thread(target=batch_timer_thread, daemon=True).start()
-  app.run(host="0.0.0.0", port=80)
+  app.run(host="0.0.0.0", port=5000)

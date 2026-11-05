@@ -1,6 +1,10 @@
 # 파일명: .gitignore
 # 역할: Git이 변경사항을 추적할 때 무시(제외)할 파일과 폴더 목록을 지정합니다.
 
+# c엔진 실행파일인 my_pcap_app
+my_pcap_app
+
+
 # 1. 패키지 설치 폴더 (용량이 매우 크고 각자 npm install로 설치해야 함)
 node_modules/
 frontend/node_modules/
@@ -87,8 +91,6 @@ __pycache__/
 *.pyc
 
 # 대용량 데이터 및 모델 파일 제외
-*.csv
-*.pkl
 *.iml
 .idea/
 
