@@ -69,10 +69,12 @@
     <div class="container">
         <div class="icon">🚫</div>
         <h1>접속이 차단되었습니다.</h1>
-        <p>네트워크 보안 정책 위반으로 인해 해당 웹사이트로의 접근이 제한(Ban)되었습니다.</p>
+        <!-- MAC 밴 뿐만 아니라 계정 정지 상황에도 어울리도록 안내 문구를 포괄적으로 수정 -->
+        <p>보안 정책 위반 또는 계정 상태 제한으로 인해 접근이 차단되었습니다.</p>
 
         <div class="info-box">
-            <p><strong>차단 사유:</strong> <span id="block-reason" class="highlight">확인 중...</span></p>
+            <!-- js 대신 Flask 템플릿 변수를 사용하여 차단 사유 출력 -->
+            <p><strong>차단 사유:</strong> <span id="block-reason" class="highlight">{{ error_msg | default('보안 정책 위반 (사유 미지정)') }}</span></p>
         </div>
 
         <p>본 차단 조치에 대한 문의 사항은 네트워크 보안 관리자에게 연락하시기 바랍니다.</p>
@@ -82,14 +84,7 @@
         </div>
     </div>
 
-    <script>
-        // URL 파라미터에서 데이터 추출 (예: ?ip=192.168.0.1&url=example.com&reason=비정상적인 패킷 감지)
-        const urlParams = new URLSearchParams(window.location.search);
-        
-        const blockReason = urlParams.get('reason') || '보안 정책 위반 (사유 미지정)';
-
-        document.getElementById('block-reason').innerText = blockReason;
-    </script>
+    <!-- 기존 URL 파라미터를 파싱하던 <script> 블록은 완전히 삭제되었습니다. -->
 
 </body>
 </html>
