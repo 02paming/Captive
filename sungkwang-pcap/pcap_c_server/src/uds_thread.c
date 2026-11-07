@@ -13,7 +13,7 @@ void *uds_server_thread(void *arg) {
   ctx->server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
   printf("[UDS 스레드] 방금 만든 소켓 번호: %d\n", ctx->server_fd);
   if (ctx->server_fd < 0) {
-    perror("UDS 소켓 생성 실패");
+    SYSTEM_LOG(LOG_ERR, "[에러] UDS 소켓 생성 실패");
     return NULL;
   }
 
@@ -24,16 +24,16 @@ void *uds_server_thread(void *arg) {
   strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
   if (bind(ctx->server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-    perror("UDS 바인드 실패");
+    SYSTEM_LOG(LOG_ERR, "[에러] UDS 바인드 실패");
     close(ctx->server_fd);
     return NULL;
   }
   if (chmod(SOCKET_PATH, 0666) == -1) {
-    perror("chmod 오류");
+    SYSTEM_LOG(LOG_ERR, "[에러] chmod 오류");
 }
 
   if (listen(ctx->server_fd, 5) < 0) {
-    perror("UDS 리슨 실패");
+    SYSTEM_LOG(LOG_ERR, "[에러] UDS 리슨 실패");
     close(ctx->server_fd);
     return NULL;
   }
@@ -41,7 +41,7 @@ void *uds_server_thread(void *arg) {
   while (ctx->keep_running) {
     client_fd = accept(ctx->server_fd, NULL, NULL);
     if (client_fd < 0) {
-      printf("[UDS 스레드] 종료 신호 확인.\n");
+      SYSTEM_LOG(LOG_INFO, "[UDS 스레드] 종료 신호 확인.");
       if (!ctx->keep_running)
         break;
       continue;
@@ -107,7 +107,7 @@ void *uds_server_thread(void *arg) {
                 delete_from_hash_table(old_active_shield, domain);
             }
 
-            printf("[UDS 스레드] 무중단 %s 완료: %s\n", command, domain);
+            SYSTEM_LOG(LOG_INFO, "[UDS 스레드] 무중단 %s 완료: %s",command, domain);
           }
         }
         // =================================================================
@@ -126,7 +126,7 @@ void *uds_server_thread(void *arg) {
             pthread_cond_signal(&ctx->auth.cond);
             pthread_mutex_unlock(&ctx->auth.lock);
 
-            printf("-> [UDS 스레드 정책 갱신] 근무시간 %d시~%d시, 미활동 대기 %d초\n", start_h, end_h, interval_sec);
+            SYSTEM_LOG(LOG_INFO, "-> [UDS 스레드 정책 갱신] 근무시간 %d시~%d시, 미활동 대기 %d초",start_h, end_h, interval_sec);
           }
         }
         // =================================================================
@@ -154,9 +154,11 @@ void *uds_server_thread(void *arg) {
                   if (is_empty) {
                       write(client_fd, "00:00:00:00:00:00", 17);
                   } else {
-                      char response[32] = {0};
-                      struct ether_addr *mac_ptr = (struct ether_addr *)ctx->auth.latest_mac_cache[host_id];
-                      ether_ntoa_r(mac_ptr, response);
+                      // char response[32] = {0};
+                      // struct ether_addr *mac_ptr = (struct ether_addr *)ctx->auth.latest_mac_cache[host_id];
+                      // ether_ntoa_r(mac_ptr, response);
+                      char response[18] = {0}; // 맥17글자 + NULL 문자 공간
+                      mac_to_string(ctx->auth.latest_mac_cache[host_id], response);
                       write(client_fd, response, strlen(response));
                   }
                 }
@@ -171,7 +173,7 @@ void *uds_server_thread(void *arg) {
                     ctx->auth.records[host_id].last_seen = 0;
                     memset(ctx->auth.records[host_id].mac_addr, 0, ETH_ALEN);
                     pthread_mutex_unlock(&ctx->auth.lock);
-                    printf("[UDS 스레드] Host ID %d 강제 퇴출 (%s).\n", host_id, command);
+                    SYSTEM_LOG(LOG_INFO, "[UDS 스레드] Host ID %d 강제 퇴출 (%s).",host_id, command);
                 }
               }
               else if (strcmp(command, "AUTH") == 0 || strcmp(command, "RESTORE") == 0) {
@@ -185,9 +187,9 @@ void *uds_server_thread(void *arg) {
                       ctx->auth.records[host_id].is_mac_bound = 1;
                       ctx->auth.records[host_id].last_seen = cur_time;
                       // expire_time 할당 로직은 스마트 만료 도입으로 인해 완벽히 삭제됨
-                      printf("[UDS 스레드] Host ID %d 인증/복구 완료! (MAC: %s)\n", host_id, mac_str);
+                      SYSTEM_LOG(LOG_INFO, "[UDS 스레드] Host ID %d 인증/복구 완료! (MAC: %s)", host_id, mac_str);
                   } else {
-                      printf("[UDS 에러] 잘못된 MAC 문자열 형식: %s\n", mac_str);
+                      SYSTEM_LOG(LOG_ERR, "[UDS 에러] 잘못된 MAC 문자열 형식: %s",mac_str);
                   }
                   pthread_mutex_unlock(&ctx->auth.lock);
                 }

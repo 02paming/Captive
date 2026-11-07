@@ -243,13 +243,21 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
             send_token(token);
 
             if (is_authenticated == 2) {
-                printf("[경고] MAC주소 불일치(IP 스푸핑 감지)! 차단페이지로 유도!\n");
+                SYSTEM_LOG(LOG_WARNING, "[보안경고] MAC주소 불일치(IP 스푸핑 감지)! IP: %s", inet_ntoa(ip->ip_src));
                 // 인젝션 함수도 토큰을 붙이도록 호출 (utils.c 수정 시 반영)
                 inject_redirect_ban(handle_inject, ethernet, ip, tcp, payload_size, token, "MAC_Address_Error");
+
+                // 1. MAC 주소를 담을 18바이트 빈 공간 준비
+                char mac_str[18];
+                
+                // 2. 방금 만든 깔끔한 유틸 함수 호출! (snprintf의 더러운 코드가 안 보임)
+                mac_to_string(ethernet->ether_shost, mac_str);
+                push_to_log_queue(ctx, inet_ntoa(ip->ip_src), mac_str, LOG_MAC_MISMATCH, 0); //3번째인자인 도메인자리를 맥으로도 같이씀
             } else {
                 printf("미인증 PC: [%s] >>> 인증 포털로 리디렉션\n", inet_ntoa(ip->ip_src));
                 // 인젝션 함수도 토큰을 붙이도록 호출 (utils.c 수정 시 반영)
                 inject_redirect_token(handle_inject, ethernet, ip, tcp, payload_size, token);
+                
             }
 
             // 기존 요청을 죽임

@@ -38,7 +38,7 @@ int init_context(EngineContext *ctx) {
 
     if (!ctx->black_manager.shield_A || !ctx->fixed_black_shield) return -1;
 
-    printf("고정 데이터 로드 중...\n");
+    SYSTEM_LOG(LOG_INFO, "고정 데이터 로드 중...");
     load_domains_from_txt(ctx->fixed_black_shield, "/tmp/ai_blacklist.txt", LOG_MANUAL_BLOCK, -1);
     load_domains_from_txt(ctx->fixed_white_shield, "/tmp/ai_whitelist.txt", LOG_MANUAL_PASS, -1);
 
@@ -59,13 +59,13 @@ int init_capture(EngineContext *ctx) {
 
     ctx->mir_handle = pcap_open_live(mir_dev, BUFSIZ, 1, 1, errbuf);
     if (ctx->mir_handle == NULL) {
-        fprintf(stderr, "캡처 디바이스(%s)를 열 수 없습니다: %s\n", mir_dev, errbuf);
+        SYSTEM_LOG(LOG_CRIT, "[에러] 캡처 디바이스(%s)를 열 수 없습니다: %s",mir_dev, errbuf);
         return -1;
     }
 
     ctx->inject_handle = pcap_open_live(inject_dev, BUFSIZ, 0, 0, errbuf);
     if (ctx->inject_handle == NULL) {
-        fprintf(stderr, "인젝션 디바이스(%s)를 열 수 없습니다: %s\n", inject_dev, errbuf);
+        SYSTEM_LOG(LOG_CRIT, "[에러] 인젝션 디바이스(%s)를 열 수 없습니다: %s",inject_dev, errbuf);
         return -1;
     }
 
@@ -73,17 +73,17 @@ int init_capture(EngineContext *ctx) {
     pcap_setdirection(ctx->inject_handle, PCAP_D_OUT);
 
     if (pcap_datalink(ctx->mir_handle) != DLT_EN10MB || pcap_datalink(ctx->inject_handle) != DLT_EN10MB) {
-        fprintf(stderr, "이더넷 장비가 아닙니다!\n");
+        SYSTEM_LOG(LOG_CRIT, "[에러] 이더넷 장비가 아닙니다!");
         return -1;
     }
 
     if (pcap_compile(ctx->mir_handle, &filter, filter_exp, 0, PCAP_NETMASK_UNKNOWN) == -1) {
-        fprintf(stderr, "필터 컴파일 실패: %s\n", pcap_geterr(ctx->mir_handle));
+        SYSTEM_LOG(LOG_CRIT, "[에러] 필터 컴파일 실패: %s",pcap_geterr(ctx->mir_handle));
         return -1;
     }
 
     if (pcap_setfilter(ctx->mir_handle, &filter) == -1) {
-        fprintf(stderr, "필터 적용 실패: %s\n", pcap_geterr(ctx->mir_handle));
+        SYSTEM_LOG(LOG_CRIT, "[에러] 필터 적용 실패: %s",pcap_geterr(ctx->mir_handle));
         pcap_freecode(&filter);
         return -1;
     }
@@ -96,7 +96,7 @@ int init_capture(EngineContext *ctx) {
 // 3. 자원 일괄 정리 (메모리 leak 방지)
 // ---------------------------------------------------------
 void cleanup_all_resources(EngineContext *ctx) {
-    printf("\n[Cleanup] 사용한 자원(메모리, 핸들, 락)을 일괄 해제합니다.\n");
+    SYSTEM_LOG(LOG_INFO, "[Cleanup] 사용한 자원(메모리, 핸들, 락)을 일괄 해제합니다.");
     system("pkill -f sync_runner.py");
     
     if (ctx->inject_handle) pcap_close(ctx->inject_handle);

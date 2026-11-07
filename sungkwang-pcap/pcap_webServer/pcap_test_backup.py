@@ -35,6 +35,7 @@ API_BLACKLIST_LOG = "http://192.168.3.23:8080/api/blacklist_log"  # 위협탐지
 API_WEB_ACCESS_LOG = (
   "http://192.168.3.23:8080/api/web_access_log"  # 인증된사원 웹접속로그
 )
+API_MISMATCH_LOG = "http://192.168.3.23:8080/api/mac_mismatch_log" #인증된ip와 맞지않는 맥이들어옴
 
 # C 엔진이 발급한 일회용 토큰을 임시 저장할 메모리 공간
 valid_tokens = set()
@@ -523,6 +524,23 @@ def handle_uds_client(conn):
           print(f"[API 전달 완료] 백엔드 응답 코드: {response.status_code}")
         except Exception as e:
           print(f"[API 전달 실패] 백엔드 서버 연결 오류: {e}")
+
+      elif command == "MAC" and len(parts) >= 3:
+            client_ip = parts[1]
+            mismatched_mac = parts[2].strip()
+            
+            data = {
+                "client_ip": client_ip.split(".")[-1],
+                "mismatch_mac": mismatched_mac
+            }
+            
+            print(f"\n[UDS 수신] MAC 불일치 감지 -> IP: {client_ip} / MAC: {mismatched_mac}")
+
+            try:
+                # pcap_checker.py 서버 주소와 포트(8080)에 맞게 설정하세요.
+                requests.post(API_MISMATCH_LOG, json=data, timeout=2)
+            except Exception as e:
+                print(f"[API 전송 실패] pcap_checker 서버 연결 오류: {e}")
 
       # 일반 log일때(인증된사원 일반접속로그)
       # ["LOG",55,"ccc.com"]

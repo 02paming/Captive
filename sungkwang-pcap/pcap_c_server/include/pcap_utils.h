@@ -3,6 +3,9 @@
 
 #include "pcap_common.h"
 
+//맥 문자열처리
+void mac_to_string(const unsigned char *mac_bytes, char *mac_str_out);
+
 // 패킷 처리 및 인젝션
 void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u_char *packet);
 unsigned short csum(unsigned short *ptr, int nbytes);

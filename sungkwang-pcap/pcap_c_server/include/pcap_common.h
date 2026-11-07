@@ -6,6 +6,7 @@
 #define _GNU_SOURCE       // memmem 같은 GNU 확장 함수를 쓰겠다고 선언
 #define __FAVOR_BSD       // th_seq, th_sport 같은 유닉스(BSD) 스타일 구조체 이름을 쓰겠다고 선언
 
+#include <syslog.h> // 리눅스 표준 시스템 로그 헤더
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,11 @@
 #include <time.h>
 #include <signal.h>
 #include <stdbool.h>
+
+#define SYSTEM_LOG(level, fmt, ...) do { \
+    printf(fmt "\n", ##__VA_ARGS__); \
+    syslog(level, fmt, ##__VA_ARGS__); \
+} while(0)
 
 #define MAX_BLACKLIST_COUNT 128
 #define MAX_LOG_QUEUE 1024
@@ -45,7 +51,7 @@
 #define LOG_AI_DOUBT_BLOCK 4  // AI 의심 차단
 #define LOG_AI_DOUBT_PASS 5   // AI 의심 정상 통과
 #define LOG_AI_PASS 6         // AI 정상 통과
-
+#define LOG_MAC_MISMATCH 99   // 비정상 맥 로그
 
 
 //배열연결리스트 + 해쉬테이블 구조

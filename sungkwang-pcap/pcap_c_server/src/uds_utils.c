@@ -1,6 +1,14 @@
 #include "pcap_common.h"
 #include "pcap_utils.h"
 
+// MAC 주소(6바이트)를 받아 "AA:BB:CC:DD:EE:FF" 형태의 17글자 대문자 문자열로 만들어주는 유틸 함수
+void mac_to_string(const unsigned char *mac_bytes, char *mac_str_out) {
+    // %02X 를 사용하므로 0이 절대 사라지지 않고 두 자리 대문자로 고정됩니다.
+    sprintf(mac_str_out, "%02X:%02X:%02X:%02X:%02X:%02X",
+            mac_bytes[0], mac_bytes[1], mac_bytes[2],
+            mac_bytes[3], mac_bytes[4], mac_bytes[5]);
+}
+
 unsigned short csum(unsigned short *ptr, int nbytes)
 {
     register long sum;
@@ -41,6 +49,9 @@ void uds_client_sock_log(const LogPacket* local_log){
   }
   else if(local_log->is_ai_blocked == 2 || local_log->is_ai_blocked == 5 || local_log->is_ai_blocked == 6) {
     sprintf(msg, "WHITE|%s|%s|%d|%.2f", local_log->client_ip, local_log->target_host, local_log->is_ai_blocked,local_log->ai_score);
+  }
+  else if(local_log->is_ai_blocked == 99){
+    sprintf(msg, "MAC|%s|%s", local_log->client_ip, local_log->target_host);
   }
   
 
