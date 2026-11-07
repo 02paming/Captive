@@ -5,6 +5,18 @@ import joblib
 import pandas as pd
 import threading
 import time
+import re
+
+# 1. 무조건 통과 (화이트리스트 - AI 연산 제외)
+REGEX_IP_ONLY = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
+REGEX_LOCAL_DOMAIN = re.compile(r"^(localhost|.*\.local|.*\.corp|.*\.internal)$")
+REGEX_TOP_SITES = re.compile(r".*\.(google\.com|naver\.com|daum\.net|github\.com|apple\.com|googleapis\.com|googlevideo\.com|microsoft\.com|azureedge\.net|msedge\.net|windowsupdate\.com|cern\.ch)$")
+
+# 2. 즉시 차단 (블랙리스트 - AI 검사 없이 Drop)
+REGEX_BAD_TLD = re.compile(r".*\.(xyz|top|tk|ml|ga|cf|pw|cc|zip)$", re.IGNORECASE)
+REGEX_CONSECUTIVE_NUMS = re.compile(r"\d{7,}")
+REGEX_BAD_HYPHENS = re.compile(r"(^-|-$|(?<!xn)--)")
+
 
 # UDS 소켓 파일 경로 (C엔진과 약속된 경로)
 SOCKET_PATH = "/tmp/ai_dga_socket.sock"
@@ -86,13 +98,7 @@ class AiBrainManager:
 # 매니저 객체 생성 (모든 스레드가 이 뇌를 공유)
 ai_config = AiBrainManager()
 
-# ---------------------------------------------------------
-# [0단계] 서버 부팅 시 DB 및 AI 무장 (단 1회 실행)
-# ---------------------------------------------------------
-print("[SYSTEM] 1. 화이트리스트 DB 장전 중...")
-df = pd.read_csv('data/dga_train_ready_korea_v2.csv')
-whitelist = set(df[df['label'] == 0]['domain'].astype(str))
-print(f"[SYSTEM] -> 화이트리스트 {len(whitelist)}개 장전 완료!")
+
 
 
 # ---------------------------------------------------------
@@ -155,6 +161,7 @@ def handle_client(conn, addr):
                 return
 
             start_time = time.time()
+            domain_lower = domain.lower()
 
             # 테스트용 강제 하드코딩 추가
             if domain == "example.com":
@@ -171,25 +178,30 @@ def handle_client(conn, addr):
             status = "WHITE"
             score = 0.0
 
-            # 1. 화이트리스트 및 신뢰 도메인 통과
-            if domain in whitelist or any(domain.endswith(s) for s in ['.google.com', '.apple.com']):
-                pass
-            
-            # 2. 하드 룰 차단 (지금은 길이와 자음연속계산함수로판단)
-            elif len(domain) > 50 or get_max_cons(domain) > 10:
-                status, score = "BLACK", 100.0
+            # ==========================================================
+            # 1단계: 정규표현식(Regex) 기반 1차 초고속 필터링
+            # ==========================================================
+            if REGEX_IP_ONLY.match(domain_lower) or REGEX_LOCAL_DOMAIN.match(domain_lower) or REGEX_TOP_SITES.match(domain_lower):
+                pass # 안전한 도메인 통과
+                
+            elif REGEX_BAD_TLD.match(domain_lower) or REGEX_CONSECUTIVE_NUMS.search(domain_lower) or REGEX_BAD_HYPHENS.search(domain_lower):
+                status, score = "BLACK", 100.0 # 악성 패턴 즉시 차단
 
-            #글로벌 빅테크/CDN 신뢰 도메인 프리패스 (추후 수정가능성있음)
-            elif any(domain.endswith(s) for s in ['.google.com', '.googleapis.com', '.googlevideo.com', '.microsoft.com', '.azureedge.net', '.msedge.net', '.windowsupdate.com', '.apple.com', '.cern.ch']):
-                pass
+            # ==========================================================
+            # 2단계: 기존 하드 룰 및 DB 화이트리스트 검사 (정규식을 통과한 녀석들만)
+            # ==========================================================
+            elif len(domain_lower) > 50 or get_max_cons(domain_lower) > 10:
+                status, score = "BLACK", 100.0 # 기존 하드 룰 차단 (비정상 길이 및 자음 연속)
 
-            # 3. 미지의 도메인 AI 정밀 분석 (4단계 세분화)
+            # ==========================================================
+            # 3단계: 미지의 도메인 AI 정밀 분석 (1, 2단계를 모두 뚫은 애매한 녀석들)
+            # ==========================================================
             else:
                 # 매니저에게 지금 가동 중인 모델이랑 임계치 좀 빌려줘 라고 요청합니다.
                 current_model, current_vec, t_black, t_black_doubt, t_white_doubt = ai_config.get_state()
 
-                # 안전하게 빌려온 객체로 분석 수행 (분석 도중에 다른 스레드가 뇌를 바꿔치기해도 이 스레드는 예전 객체를 쥐고 있으므로 뻗지 않습니다!)
-                vec = current_vec.transform([domain])
+                # 안전하게 빌려온 객체로 분석 수행 
+                vec = current_vec.transform([domain_lower]) # 소문자로 변환된 도메인 투입
                 score = float(current_model.predict_proba(vec)[0][1] * 100)
                 score = round(score, 2)
 
