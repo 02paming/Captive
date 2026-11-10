@@ -96,6 +96,11 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
   // 패킷에 도메인이 없거나 파싱에 실패하면 즉시 다음 패킷을 받으러 감 (0초 컷)
   if (!is_parsed) return;
 
+  //사내망 포털(Flask 웹서버)로 향하는 접근은 AI 검사 및 로깅에서 완전 제외!
+  // if (strstr(check_site, "192.168.3.243") != NULL) {
+  //     return; 
+  // }
+
   // 인증성공시
   if (is_authenticated == 1) {
     printf("인증완료된 계정입니다!! [%s]\n", inet_ntoa(ip->ip_src));
@@ -131,27 +136,14 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
     // [2계급 절대 차단] 관리자 수동 차단이거나 AI가 확정 차단한 도메인인가?
     if (black_node != NULL && (black_node->block_type == LOG_MANUAL_BLOCK || black_node->block_type == LOG_AI_BLOCK || black_node->block_type == LOG_AI_DOUBT_BLOCK)) {
         if (ip->ip_p == IPPROTO_TCP) {
-            //                            토큰 적용
-            // =========================================================================
-            pthread_mutex_lock(&ctx->auth.lock);
-            time_t now = time(NULL);
 
-            // 2초 내에 이 IP에 이미 리다이렉트(차단창)를 쐈다면, 이번엔 RST만 쏘고 무시
-            if (now - ctx->auth.records[host_id].last_redir_time < 2) {
-                pthread_mutex_unlock(&ctx->auth.lock);
+            //토큰발급
+            u_int token = check_and_generate_token(ctx, host_id);
+            if (token == 0) {
+                // 2초가 안 지났으므로 RST만 쏘고 종료
                 inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
-                return; 
+                return;
             }
-
-            // 2초가 지났다면 시간을 갱신하고 고유 토큰(난수) 생성
-            ctx->auth.records[host_id].last_redir_time = now;
-            u_int token = (u_int)rand();
-            ctx->auth.records[host_id].token = token;
-            pthread_mutex_unlock(&ctx->auth.lock);
-
-            // UDS를 통해 Flask(80포트) 서버로 토큰 쏘기 (utils.c의 함수)
-            send_token(token);
-            // =========================================================================
 
             printf("[차단 타격!] 관리자/AI 차단 사이트 접속 끊음!! [%s]\n", check_site);
             inject_redirect_blocked(handle_inject, ethernet, ip, tcp, payload_size,token);
@@ -172,6 +164,14 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
     // [4계급 미지 도메인] 화이트/블랙 어디에도 없음 (Greylisting 시작)
     if (black_node == NULL) {
+        //토큰발급
+        u_int token = check_and_generate_token(ctx, host_id);
+            if (token == 0) {
+                // 2초가 안 지났으므로 RST만 쏘고 종료
+                inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
+                return;
+            }
+
         if (ip->ip_p == IPPROTO_TCP) {
             insert_hash_table(ctx->black_manager.active_shield, check_site, LOG_PENDING,-1);
         }
@@ -179,13 +179,22 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
         if (ip->ip_p == IPPROTO_UDP) return; 
         else if (ip->ip_p == IPPROTO_TCP) {
+            inject_redirect_analyzing(handle_inject, ethernet, ip, tcp, payload_size,token, check_site);
             inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
             return; 
         }
     } 
     else if (black_node->block_type == LOG_PENDING) {
       if (ip->ip_p == IPPROTO_TCP) {
+        //토큰발급
+        u_int token = check_and_generate_token(ctx, host_id);
+            if (token == 0) {
+                // 2초가 안 지났으므로 RST만 쏘고 종료
+                inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
+                return;
+            }
         push_to_ai_task_queue(ctx, check_site);
+        inject_redirect_analyzing(handle_inject, ethernet, ip, tcp, payload_size,token, check_site);
         inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
       } 
       return;
@@ -195,6 +204,9 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
     NORMAL_PASS_LOGIC:
     if (ip->ip_p == IPPROTO_TCP) {
 
+      // 1. 자기 자신(웹 포털 192.168.3.243)로 향하는 트래픽이면 무시! (부메랑 버그 차단)
+        // if (strstr(check_site, "192.168.3.243") != NULL) return;
+
       if (payload_size < 4 || strncmp(payload_start, "GET ", 4) != 0 || memmem(payload_start, payload_size, "Accept: text/html", 17) == NULL) return;
       
       int is_refresh = (memmem(payload_start, payload_size, "Cache-Control: max-age=0", 24) != NULL) ||
@@ -202,11 +214,12 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
       if (!is_refresh) {
         if (memmem(payload_start, payload_size, "Referer: ", 9) != NULL) return;
-        if (time(NULL) - ctx->auth.records[host_id].last_log_time < 1) return;
+        if (time(NULL) - ctx->auth.records[host_id].last_log_time <= 3) return; 
       }
 
       ctx->auth.records[host_id].last_log_time = time(NULL);
       
+      // SYSTEM_LOG(LOG_INFO, "[로그찍히나] 도메인: %s (Type: %d)", check_site, white_node->block_type);
       push_to_log_queue(ctx, inet_ntoa(ip->ip_src), check_site, white_node->block_type, white_node->ai_score); 
     }
   }
@@ -222,25 +235,12 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
                 return;
             }
 
-            // [추가] 토큰 생성 전, 안전하게 auth.lock을 겁니다.
-            pthread_mutex_lock(&ctx->auth.lock);
-            time_t now = time(NULL);
-
-            // [플러딩 방어] 2초 이내에 이 IP에 리다이렉트를 쏜 적이 있다면, 토큰 생성 없이 RST만 쏘고 종료
-            if (now - ctx->auth.records[host_id].last_redir_time < 2) {
-                pthread_mutex_unlock(&ctx->auth.lock);
+            u_int token = check_and_generate_token(ctx, host_id);
+            if (token == 0) {
+                // 2초가 안 지났으므로 RST만 쏘고 종료
                 inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
                 return;
             }
-
-            // 2초가 지났다면 시간을 갱신하고, 해당 IP의 고유 토큰(난수) 생성
-            ctx->auth.records[host_id].last_redir_time = now;
-            u_int token = (u_int)rand();
-            ctx->auth.records[host_id].token = token;
-            pthread_mutex_unlock(&ctx->auth.lock);
-
-            // UDS를 통해 Flask 서버로 토큰 쏘기 
-            send_token(token);
 
             if (is_authenticated == 2) {
                 SYSTEM_LOG(LOG_WARNING, "[보안경고] MAC주소 불일치(IP 스푸핑 감지)! IP: %s", inet_ntoa(ip->ip_src));

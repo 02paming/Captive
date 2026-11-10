@@ -12,9 +12,13 @@ unsigned short csum(unsigned short *ptr, int nbytes);
 void inject_redirect_blocked(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token);
 void inject_rst(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size);
 
-// 일회용 토큰 및 밴 안내창 인젝션 함수 원형
+
+// 일회용 토큰 , 밴 안내창 인젝션 , ai분석 대기 인젝션 함수 원형
+u_int check_and_generate_token(EngineContext *ctx, int host_id);
 void inject_redirect_token(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token);
 void inject_redirect_ban(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token, const char* reason);
+void inject_redirect_analyzing(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token, const char* target_url);
+
 
 // UDS 통신
 void uds_client_sock(const int ip);

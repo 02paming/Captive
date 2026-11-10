@@ -9,6 +9,38 @@ void mac_to_string(const unsigned char *mac_bytes, char *mac_str_out) {
             mac_bytes[3], mac_bytes[4], mac_bytes[5]);
 }
 
+//토큰 발급
+u_int check_and_generate_token(EngineContext *ctx, int host_id) {
+    u_int token = 0;
+    
+    pthread_mutex_lock(&ctx->auth.lock);
+    time_t now = time(NULL);
+
+    // 2초 내에 이미 리다이렉트(차단창)를 쐈다면
+    if (now - ctx->auth.records[host_id].last_redir_time < 2) {
+        pthread_mutex_unlock(&ctx->auth.lock);
+        return 0; // 0을 반환하여 RST 처리를 지시
+    }
+
+    // 2초가 지났다면 시간을 갱신하고 고유 토큰 생성
+    ctx->auth.records[host_id].last_redir_time = now;
+    
+    //  예측 불가능한 커널 난수 추출
+    if (getrandom(&token, sizeof(token), 0) != sizeof(token)) {
+        // 난수 생성 풀 고갈 등 예외 발생 시 안전하게 0 반환 (리다이렉트 차단)
+        pthread_mutex_unlock(&ctx->auth.lock);
+        return 0; 
+    }
+    
+    ctx->auth.records[host_id].token = token;
+    pthread_mutex_unlock(&ctx->auth.lock);
+
+    // UDS를 통해 Flask(5000포트) 서버로 토큰 쏘기
+    send_token(token);
+
+    return token;
+}
+
 unsigned short csum(unsigned short *ptr, int nbytes)
 {
     register long sum;

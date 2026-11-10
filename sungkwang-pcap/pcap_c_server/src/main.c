@@ -77,7 +77,6 @@ EngineContext *g_ctx = NULL;
 int main(void) {
     // "pcap_engine"이라는 이름으로 로그를 남기겠다고 커널에 신고합니다.
     openlog("pcap_engine", LOG_PID | LOG_CONS | LOG_NDELAY, LOG_DAEMON);
-    srand(time(NULL));
     int ret_code = 0; //리턴코드 기존에 그냥 return 1 이나 0했던거 변수화한것
     EngineContext ctx = {0};
     

@@ -4,9 +4,14 @@ import threading  # uds 서버역할의 스레드를 백그라운드로 하나�
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from flask import Flask, request, render_template, jsonify, abort
+from flask import Flask, request, render_template, jsonify, abort, session, redirect
+from datetime import timedelta 
 
 app = Flask(__name__)
+#세션 암호화용 시크릿키
+app.secret_key = "super_secret_captive_key_123!"
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=3) #세션만료 3분타이머
+
 # 0. 내부 ai프로세스와 통신
 CONFIG_SOCKET_PATH = "/tmp/ai_config.sock"
 
@@ -81,92 +86,121 @@ def token_uds_server():
 # =========================================================================
 # 4. 마스터 동기화 스레드 (부팅 시 기동 순서 꼬임 방어) 기존 run_initial_sync() 에서 바꾼것임
 # =========================================================================
-def master_sync_thread():
-  if os.path.exists(SYNC_WAIT_SOCKET):
-    os.remove(SYNC_WAIT_SOCKET)
 
-  sync_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-  sync_server.bind(SYNC_WAIT_SOCKET)
-  sync_server.listen(1)
-
-  print(f"[*] C 엔진(sync_runner) 연결 대기 중... ({SYNC_WAIT_SOCKET})")
-
-  while True:
-    conn, _ = sync_server.accept()
-    print("[*] C 엔진 가동 감지! 장고(Django) 웹 서버와 동기화를 시작합니다.")
-
-    # 8080 서버가 켜져서 응답할 때까지 무한 핑퐁 대기
+def perform_sync_logic():
+    """Django(8080)와 통신하여 정책 및 세션을 복구하는 핵심 로직 (5초 대기 부활)"""
     while True:
-      try:
-        session_res = requests.get(API_INITIAL_SYNC, timeout=3)
+        try:
+            # 1. 장고 서버에 활성 세션 요청
+            session_res = requests.get(API_INITIAL_SYNC, timeout=3)
+            
+            if session_res.status_code == 200:
+                active_sessions = session_res.json().get("data", [])
 
-        if session_res.status_code == 200:
-          active_sessions = session_res.json().get("data", [])
+                # --- 1. 정책 동기화 ---
+                try:
+                    policy_res = requests.get(API_POLICY, timeout=3)
+                    if policy_res.status_code == 200:
+                        policy_data = policy_res.json().get("data", {})
+                        safe_start = policy_data.get("safe_zone_start", 9)
+                        safe_end = policy_data.get("safe_zone_end", 18)
+                        interval = policy_data.get("expire_interval", 600)
+                    else:
+                        safe_start, safe_end, interval = 9, 18, 600
+                    send_host_id_via_uds(f"POLICY {safe_start} {safe_end} {interval}", "")
+                except:
+                    send_host_id_via_uds("POLICY 9 18 600", "")
 
-          # 1. 정책 동기화 (팀원 기능 병합 - 출퇴근 시간)
-          try:
-            policy_res = requests.get(API_POLICY, timeout=3)
-            if policy_res.status_code == 200:
-              policy_data = policy_res.json().get("data", {})
-              safe_start = policy_data.get("safe_zone_start", 9)
-              safe_end = policy_data.get("safe_zone_end", 18)
-              interval = policy_data.get("expire_interval", 600)
+                # --- 2. 세션 복구 동기화 ---
+                for session in active_sessions:
+                    host_id = session["host_id"]
+                    mac = session["mac"]
+                    if mac and mac != "00:00:00:00:00:00":
+                        send_host_id_via_uds("RESTORE", f"{host_id} {mac}")
+
+                # --- 3. 도메인 동기화 ---
+                try:
+                    domain_res = requests.get(API_DOMAINS_SYNC, timeout=3)
+                    if domain_res.status_code == 200 and domain_res.json().get("status") == "success":
+                        db_domains = domain_res.json().get("data", [])
+                        for item in db_domains:
+                            sync_type = item["type"].upper()
+                            domain = item["domain"]
+                            source = item.get("source", "USER")
+                            ai_score = item.get("ai_score", -1.0)
+                            send_host_id_via_uds(f"ADD_{sync_type}", f"{domain} {source} {ai_score}")
+                        print(f"=== [도메인 동기화] 총 {len(db_domains)}개 복구 ===")
+                except Exception as e:
+                    print(f" -> [경고] 도메인 DB 요청 실패: {e}")
+
+                print("=== [초기 동기화 완벽 성공] ===")
+                break # 💡 성공적으로 끝났으므로 5초 재시도 루프 탈출!
+
             else:
-              safe_start, safe_end, interval = 9, 18, 600
-            send_host_id_via_uds(
-              f"POLICY {safe_start} {safe_end} {interval}", ""
-            )
-          except:
-            # 8080에서 정책 API를 못 만들었을 때 뻗지 않도록 방어
-            send_host_id_via_uds("POLICY 9 18 600", "")
+                print(f"[*] 장고(8080) 응답 대기 중 (상태 코드: {session_res.status_code}). 5초 후 재시도...")
+                time.sleep(5)
 
-          # 2. 기존 인증된 PC 세션 복구 동기화
-          for session in active_sessions:
-            host_id = session["host_id"]
-            mac = session["mac"]
-            if mac and mac != "00:00:00:00:00:00":
-              send_host_id_via_uds("RESTORE", f"{host_id} {mac}")
+        except Exception as e:
+            print(f"[*] 장고(8080) 웹 서버와 연결 실패 ({e}). 5초 후 재시도...")
+            time.sleep(5)
 
-          # 3. 도메인 동기화 (성광님의 기존 ADD_BLACK / ADD_WHITE 단건 전송 방식 유지!)
-          try:
-            domain_res = requests.get(API_DOMAINS_SYNC, timeout=3)
-            if (
-              domain_res.status_code == 200
-              and domain_res.json().get("status") == "success"
-            ):
-              db_domains = domain_res.json().get("data", [])
-              for item in db_domains:
+def master_sync_thread():
+    print("[*] 마스터 동기화 스레드 시작: 초기 부팅 상태 확인 중...")
+    
+    if os.path.exists(SYNC_WAIT_SOCKET):
+        os.remove(SYNC_WAIT_SOCKET)
 
-                sync_type = item["type"].upper()  # BLACK 또는 WHITE
-                domain = item["domain"]
-                source = item.get("source", "USER")
-                ai_score = item.get("ai_score", -1.0)
-                cmd = f"ADD_{sync_type}"
-                payload = f"{domain} {source} {ai_score}"
-                print(payload)
-                send_host_id_via_uds(cmd, payload)
+    sync_server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sync_server.bind(SYNC_WAIT_SOCKET)
+    sync_server.listen(1)
+    
+    # =========================================================
+    # [1단계] 초기 부팅 판별 (딱 3초만 기다려보기)
+    # =========================================================
+    sync_server.settimeout(2.0) 
+    
+    try:
+        # 1. C 엔진이 먼저 켜져서 밖에서 sync_runner가 1초마다 문을 두드리고 있었다면?
+        conn, _ = sync_server.accept()
+        print("\n[*] C 엔진(sync_runner) 가동 감지! 초기 동기화를 1회 시작합니다.")
+        perform_sync_logic()
+        conn.sendall(b"SYNC_DONE")
+        conn.close()
+        
+    except socket.timeout:
+        # 2. 3초가 지났는데 아무도 문을 안 두드리면? (Flask만 단독 재기동 상황)
+        try:
+            test_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            test_sock.connect(SOCKET_PATH) # C 엔진 살아있나 Ping!
+            test_sock.close()
+            print("\n[*] C 엔진이 이미 실행 중입니다. (Flask 단독 재기동) 즉시 1회 동기화합니다!")
+            perform_sync_logic()
+        except:
+            print("\n[*] C 엔진이 아직 켜지지 않았습니다. 부팅 대기 모드로 진입합니다...")
 
-              print(
-                f"=== [도메인 동기화] 총 {len(db_domains)}개 복구 ==="
-              )
-          except Exception as e:
-            print(f" -> [경고] 도메인 DB 요청 실패: {e}")
+    # =========================================================
+    # [2단계] 영구 대기 모드 진입 (앞으로 C 엔진 껐다 켤 때를 대비)
+    # =========================================================
+    # 초기 확인이 끝났으므로 타임아웃을 해제(None)하여 블로킹(무한 대기) 상태로 만듭니다.
+    sync_server.settimeout(None) 
+    print(f"[*] C 엔진(sync_runner) 재기동 상시 대기 모드 진입... ({SYNC_WAIT_SOCKET})")
 
-          print(f"=== [초기 동기화 완벽 성공] ===")
-
-          # 4. sync_runner.py에게 종료 신호 전송 (C 엔진 pcap_loop 가동!)
-          conn.sendall(b"SYNC_DONE")
-          break
-
-        else:
-          print(
-            f" -> [대기] 장고 응답코드: {session_res.status_code}. 5초 후 재시도..."
-          )
-      except Exception as e:
-        print(f" -> [연결 실패] 사유: {e}. 5초 후 재시도...")
-      time.sleep(5)
-
-    conn.close()
+    while True:
+        try:
+            # 나중에 관리자가 C 엔진만 다시 껐다 켰을 때(make run) 여기서 찰떡같이 받아줍니다.
+            conn, _ = sync_server.accept()
+            print("\n[*] C 엔진 재기동(sync_runner) 감지! 상태 재동기화를 수행합니다.")
+            
+            perform_sync_logic()
+            
+            conn.sendall(b"SYNC_DONE")
+            conn.close()
+            # break 없이 다시 위로 올라가서 무한 대기 유지!
+            
+        except Exception as e:
+            print(f" -> [연결 오류] {e}")
+            time.sleep(1)
+            continue
 
 
 # =========================================================================
@@ -180,31 +214,47 @@ def add_header(response):
 
 @app.route("/", methods=["GET"])
 def index():
-  req_token = request.args.get("token")
-  if not req_token or req_token not in valid_tokens:
-    abort(403)  # 권한 없음 에러
-  valid_tokens.remove(req_token)  # 한 번 쓴 토큰 폐기
-  return render_template("index.html")
+    req_token = request.args.get("token")
+    
+    if req_token and req_token in valid_tokens:
+        valid_tokens.remove(req_token)
+        
+        # 💡 토큰을 내면 3분짜리 시한부 팔찌 발급
+        session.permanent = True 
+        session['portal_access_granted'] = True
+        
+    elif not session.get('portal_access_granted'):
+        abort(403)
+        
+    return render_template("index.html")
 
 
 @app.route("/ban", methods=["GET"])
-def ban_site():
-  req_token = request.args.get("token")
-  if not req_token or req_token not in valid_tokens:
-    abort(403)
-  valid_tokens.remove(req_token)
+# 1. C 엔진이 보낸 지저분한 URL을 여기서 받은뒤
+def ban_receive():
+    req_token = request.args.get("token")
+    if not req_token or req_token not in valid_tokens:
+        abort(403)
+    valid_tokens.remove(req_token)
 
-  # 1. C 엔진이 보낸 파라미터 받기
-  raw_reason = request.args.get("reason", "알 수 없는 사유")
+    raw_reason = request.args.get("reason", "알 수 없는 사유")
+    if raw_reason == "MAC_Address_Error":
+        msg = "MAC 주소 불일치 (비정상적인 기기 접근 감지)"
+    else:
+        msg = raw_reason
 
-  # 2. 영문 사유를 사용자 친화적인 한글로 변환 (필요시 추가 가능)
-  if raw_reason == "MAC_Address_Error":
-    msg = "MAC 주소 불일치 (비정상적인 기기 접근 감지)"
-  else:
-    msg = raw_reason
+    #  에러 메시지를 세션(팔찌)에 몰래 적어둡니다.
+    session['error_msg'] = msg 
+    
+    #  파라미터가 싹 지워진 아주 깨끗한 주소로 사용자를 강제 이동시킵니다.
+    return redirect("/ban_info")
 
-  # 3. HTML 템플릿이 기다리고 있는 변수명(error_msg)에 맞춰서 전달
-  return render_template("ban_page.html", error_msg=msg)
+# 2. 사용자가 최종적으로 보게될 URL
+@app.route("/ban_info", methods=["GET"])
+def ban_show():
+    #  세션에 적어둔 에러 메시지를 꺼내오고, 보안을 위해 즉시 지워버립니다(pop).
+    msg = session.pop('error_msg', "비정상적인 접근이 차단되었습니다.")
+    return render_template("ban_page.html", error_msg=msg)
 
 
 @app.route("/blocked", methods=["GET"])
@@ -215,25 +265,20 @@ def blocked_site():
     abort(403)
   valid_tokens.remove(req_token)
 
-  # print(" [디버깅] 들어온 args 전체:", dict(request.args))
-  # get이 객체의 키값꺼내는것 아래에도 자주쓰였음 지금은 쿼리스트링 키값가져옴 args에서
-
-  # blocked_url = request.args.get("url")
-  # client_ip = request.args.get("ip")
-  # host_id = client_ip.split(".")[-1]
-
-  # if blocked_url and client_ip:
-  #   payload = {
-  #   "blacklist_domain": blocked_url,
-  #   "user_online_ip": host_id
-  #   }
-  #   try:
-  #   res = requests.post(API_BLACKLIST_LOG, json=payload, timeout=2)
-  #   print(f" PCAP 백엔드로 전달 성공 (상태코드: {res.status_code})")
-  #   except Exception as e:
-  #   print(f" PCAP 백엔드 통신 실패: {e}")
-
   return render_template("blocked_page.html")
+
+@app.route("/analyzing", methods=["GET"])
+def show_analyzing_page():
+    req_token = request.args.get("token")
+    target_url = request.args.get("url", "")
+    
+    # 토큰 검증 (기존 ban, blocked 페이지와 동일한 로직)
+    if not req_token or req_token not in valid_tokens:
+        abort(403)
+    valid_tokens.remove(req_token)
+    
+    # ai_analyzing.html 템플릿을 렌더링하면서 돌아갈 URL을 넘겨줌
+    return render_template("ai_analyzing.html", return_url=target_url)
 
 
 @app.route("/auth", methods=["POST"])
@@ -279,6 +324,9 @@ def auth():
       # API가 보내온 JSON에서 'is_valid' 값이 True인지 확인
       if result_data.get("is_valid") == True:
         print("[PCAP 로그] 3. 결과 수신 성공! 인증 통과됨.")
+
+        #인증성공시 수동 세션만료!
+        session.pop('portal_access_granted', None)
 
         # 없앨ip와 새로인증등록할ip(이건 그냥 host_id쓰면됨) 없앨 ip 응답구조 백엔드에서 추가해야함
         kick_host_id = result_data.get("kick_host_id")

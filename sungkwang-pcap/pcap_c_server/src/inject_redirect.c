@@ -170,3 +170,27 @@ void inject_redirect_token(pcap_t *handle_inject, const struct ether_header *eth
     // 공통 함수 호출
     send_fake_redirect_packet(handle_inject, ethernet, ip, tcp, payload_size, redirectMsg, logMsg);
 }
+
+
+// =========================================================================
+// 4. ai 분석 대기 리다이렉트
+// =========================================================================
+void inject_redirect_analyzing(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token, const char* target_url)
+{
+    char redirectMsg[512];
+    memset(redirectMsg, 0, sizeof(redirectMsg));
+
+    snprintf(redirectMsg, sizeof(redirectMsg),
+             "HTTP/1.1 302 Found\r\n"
+             "Location: http://192.168.3.243:5000/analyzing?url=%s&token=%u\r\n"
+             "Content-Length: 0\r\n"
+             "Connection: close\r\n"
+             "\r\n", target_url , token);
+
+
+    char logMsg[256];
+    snprintf(logMsg, sizeof(logMsg), "일회용 토큰(%u) 포함 ai분석대기 포털 인젝션", token);
+
+    // 공통 함수 호출
+    send_fake_redirect_packet(handle_inject, ethernet, ip, tcp, payload_size, redirectMsg, logMsg);
+}

@@ -6,6 +6,7 @@
 #define _GNU_SOURCE       // memmem 같은 GNU 확장 함수를 쓰겠다고 선언
 #define __FAVOR_BSD       // th_seq, th_sport 같은 유닉스(BSD) 스타일 구조체 이름을 쓰겠다고 선언
 
+#include <sys/random.h>
 #include <syslog.h> // 리눅스 표준 시스템 로그 헤더
 #include <stdio.h>
 #include <stdlib.h>
