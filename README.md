@@ -15,7 +15,7 @@
 
 ## 시스템 아키텍처 (System Architecture)
 
-![시스템 아키텍처 구조도](https://github.com/user-attachments/assets/ea4652f6-549b-49c6-8645-7cd558d573fc)
+![시스템 아키텍처 구조도](https://github.com/user-attachments/assets/c6ea5da3-6f75-47ee-99a5-a29eb2e91e31)
 
 * **망 분리 설계:** 방화벽 코어(C 엔진)와 웹 대시보드(React/Django)를 물리적/논리적으로 분리하고, Flask 프록시 및 UDS(Unix Domain Socket)를 통한 안전한 IPC 통신을 구현했습니다.
 * **마이크로서비스 백엔드:** 포트 8000(명령 및 UI 처리)과 포트 8080(PCAP 로그 수집 및 동기화)으로 백엔드의 역할을 철저히 분리하여 트래픽 병목을 방지했습니다.
