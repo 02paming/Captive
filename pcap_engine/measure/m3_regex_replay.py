@@ -129,6 +129,10 @@ def main():
         m, p50, p99 = ms_stats(times.get(k, []))
         print(f"| {k} | {n:,} | {pct(n, reach)} | {m} | {p50} | {p99} | {', '.join(examples.get(k, [])[:3])} |")
     print(f"\n**AI 모델 추론을 건너뛴 비율: {skipped:,} / {reach:,} = {pct(skipped, reach)}** (정규식 통과·차단 + 하드 룰)")
+    if fb is not None or fw is not None:
+        total = len(items)
+        print(f"**입력 전체 대비 AI 모델까지 가지 않은 비율: {fixed_hit + skipped:,} / {total:,} = {pct(fixed_hit + skipped, total)}** "
+              f"(C 엔진 고정 리스트 {fixed_hit:,} + 정규식·하드 룰 {skipped:,})")
     rx = times.get("1_정규식_통과", []) + times.get("2_정규식_차단", []) + times.get("3_하드룰_차단", [])
     if rx and times.get("4_AI_모델"):
         print(f"- 정규식·하드 룰 경로 평균 {statistics.mean(rx):.3f}ms vs 모델 경로 평균 {statistics.mean(times['4_AI_모델']):.3f}ms "
