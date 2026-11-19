@@ -139,6 +139,19 @@ int main(void) {
     pcap_loop(ctx.mir_handle, 0, packet_handler, (u_char *)&ctx);
 
 cleanup:
+    /* [측정용] 스트레스 테스트 결과 출력 — pcap_close 전에 호출해야 함 */
+    {
+        struct pcap_stat ps;
+        printf("\n===== [측정] 스트레스 테스트 결과 =====\n");
+        if (ctx.mir_handle && pcap_stats(ctx.mir_handle, &ps) == 0) {
+            printf("커널이 받은 패킷(ps_recv)        : %u\n", ps.ps_recv);
+            printf("버퍼 부족으로 버린 패킷(ps_drop)  : %u\n", ps.ps_drop);
+            printf("NIC에서 버린 패킷(ps_ifdrop)     : %u\n", ps.ps_ifdrop);
+        }
+        for (int i = 0; i < ST_COUNT; i++) printf("%-40s : %lu\n", g_st_name[i], g_st[i]);
+        printf("%-40s : %lu\n", "로그 큐 오버플로우(버려진 로그)", g_log_overflow);
+        printf("======================================\n");
+    }
     // 5. 스레드 합류 및 자원 일괄 해제
     if (log_tid != 0) pthread_join(log_tid, NULL);
     if (clean_tid != 0) pthread_join(clean_tid, NULL);

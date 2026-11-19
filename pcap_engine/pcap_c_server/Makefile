@@ -41,6 +41,12 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 $(BUILD_DIR) $(BIN_DIR):
 	mkdir -p $@
 
+# 5. [측정] 해시 테이블 벤치마크 (실제 src/hash_table.c 를 그대로 링크, 엔진과 같은 CFLAGS)
+BENCH = $(BIN_DIR)/hash_bench
+bench: $(BENCH)
+$(BENCH): bench/hash_bench.c $(SRC_DIR)/hash_table.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 run: $(TARGET)
 	sudo ./$(TARGET)
 
@@ -48,4 +54,4 @@ run: $(TARGET)
 clean:
 	rm -rf $(BUILD_DIR) $(BIN_DIR)
 
-.PHONY: all run clean
+.PHONY: all run clean bench

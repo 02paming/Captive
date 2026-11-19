@@ -172,11 +172,13 @@ int packet_mac_check(EngineContext *ctx, const int host_id, const uint8_t* packe
 // ==============================================
 
 //queue push
+unsigned long g_log_overflow = 0; /* [측정용] 로그 큐가 가득 차 버린 건수 */
+
 void push_to_log_queue(EngineContext *ctx, const char* ip, const char* domain, int is_blocked_flag, double score) {
     LogPacket log_data;
     memset(&log_data, 0, sizeof(LogPacket));
     
-    strcpy(log_data.client_ip, ip);
+    snprintf(log_data.client_ip, sizeof(log_data.client_ip), "%s", ip);
     strncpy(log_data.target_host, domain, sizeof(log_data.target_host) - 1);
     log_data.is_ai_blocked = is_blocked_flag; 
     log_data.ai_score = score;
@@ -188,6 +190,7 @@ void push_to_log_queue(EngineContext *ctx, const char* ip, const char* domain, i
         ctx->log_queue.count++;
         pthread_cond_signal(&ctx->log_queue.log_cond); // 전송 스레드 기상
     } else {
+        g_log_overflow++;
         printf("[경고] 로그 큐 오버플로우\n"); 
     }
     pthread_mutex_unlock(&ctx->log_queue.queue_lock);

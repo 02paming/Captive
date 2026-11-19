@@ -8,6 +8,14 @@ void mac_to_string(const unsigned char *mac_bytes, char *mac_str_out);
 
 // 패킷 처리 및 인젝션
 void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u_char *packet);
+
+/* [측정용] 스트레스 테스트 카운터 */
+enum { ST_IP, ST_TCP_PAYLOAD, ST_UDP, ST_HTTP_OK, ST_DNS_OK, ST_PARSE_FAIL,
+       ST_AUTH, ST_UNAUTH, ST_MAC_MISMATCH, ST_BLOCK_LOGGED, ST_BLOCK_RST_ONLY,
+       ST_PASS_LOGGED, ST_PASS_SKIP, ST_TO_AI, ST_PENDING, ST_UDP_NOLOG, ST_COUNT };
+extern unsigned long g_st[ST_COUNT];
+extern const char *g_st_name[ST_COUNT];
+extern unsigned long g_log_overflow;
 unsigned short csum(unsigned short *ptr, int nbytes);
 void inject_redirect_blocked(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token);
 void inject_rst(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size);
