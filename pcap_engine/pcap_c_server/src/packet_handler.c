@@ -4,6 +4,17 @@
 
 // time_t last_time[256] = {0}; // IP별 마지막 접속 시간(초) 기록
 
+/* ===== [측정용] 스트레스 테스트 카운터 (pcap_loop 스레드 1개만 증가시키므로 락 불필요) ===== */
+unsigned long g_st[ST_COUNT] = {0};
+const char *g_st_name[ST_COUNT] = {
+  "IP 패킷 수신", "TCP 페이로드 있음", "UDP 수신",
+  "HTTP Host 파싱 성공", "DNS 도메인 파싱 성공", "파싱 실패(버림)",
+  "인증된 PC", "미인증 PC", "MAC 불일치",
+  "차단: 302+로그", "차단: RST만(2초 내 재요청)",
+  "통과: 로그 큐에 넣음", "통과: 로그 생략(3초 중복·Referer·GET 아님)",
+  "미지 도메인 → AI 큐", "PENDING(AI 판정 대기)", "UDP 처리 후 로그 없음"
+};
+
 void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u_char *packet) {
   EngineContext *ctx = (EngineContext *)user_args;
 
@@ -13,6 +24,7 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
   struct ether_header *ethernet = (struct ether_header *)packet;
   if (ntohs(ethernet->ether_type) != ETHERTYPE_IP)
     return;
+  g_st[ST_IP]++;
 
   if (header->caplen < sizeof(struct ether_header) + sizeof(struct ip)) return;
   struct ip *ip = (struct ip *)(packet + sizeof(struct ether_header));
@@ -45,6 +57,7 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
     // 페이로드 없으면 즉시 버림
     if (payload_size <= 0) return; 
+    g_st[ST_TCP_PAYLOAD]++;
 
     //TCP 도메인 파싱 로직
     char *host_start = memmem(payload, payload_size, "Host: ", 6);
@@ -66,6 +79,10 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
     // UDP (DNS) 패킷 처리
     // UDP 헤더는 고정 8바이트
     int udp_size = 8; 
+    g_st[ST_UDP]++;
+    // [버그 수정] UDP 경로에서는 payload_size 가 계산되지 않아(0) max_qname_len 이 음수 → DNS 도메인을 한 번도 파싱하지 못했음
+    payload_size = ntohs(ip->ip_len) - ip_size - udp_size;
+    if (payload_size <= 12) return;
     u_char *dns_payload = (u_char *)ip + ip_size + udp_size;
     
     // DNS 헤더 크기는 12바이트. 도메인 질의(QNAME)는 그 직후에 바로 시작됨
@@ -94,7 +111,8 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
   }
 
   // 패킷에 도메인이 없거나 파싱에 실패하면 즉시 다음 패킷을 받으러 감 (0초 컷)
-  if (!is_parsed) return;
+  if (!is_parsed) { g_st[ST_PARSE_FAIL]++; return; }
+  if (ip->ip_p == IPPROTO_TCP) g_st[ST_HTTP_OK]++; else g_st[ST_DNS_OK]++;
 
   //사내망 포털(Flask 웹서버)로 향하는 접근은 AI 검사 및 로깅에서 완전 제외!
   // if (strstr(check_site, "192.168.3.243") != NULL) {
@@ -103,6 +121,7 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
   // 인증성공시
   if (is_authenticated == 1) {
+    g_st[ST_AUTH]++;
     printf("인증완료된 계정입니다!! [%s]\n", inet_ntoa(ip->ip_src));
 
   
@@ -142,9 +161,11 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
             if (token == 0) {
                 // 2초가 안 지났으므로 RST만 쏘고 종료
                 inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
+                g_st[ST_BLOCK_RST_ONLY]++;
                 return;
             }
 
+            g_st[ST_BLOCK_LOGGED]++;
             printf("[차단 타격!] 관리자/AI 차단 사이트 접속 끊음!! [%s]\n", check_site);
             inject_redirect_blocked(handle_inject, ethernet, ip, tcp, payload_size,token);
             inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
@@ -152,6 +173,7 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
             push_to_log_queue(ctx, inet_ntoa(ip->ip_src), check_site, black_node->block_type, black_node->ai_score); 
             
         } else if (ip->ip_p == IPPROTO_UDP) {
+          g_st[ST_UDP_NOLOG]++;
           return;
         }
       return;
@@ -164,6 +186,18 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
     // [4계급 미지 도메인] 화이트/블랙 어디에도 없음 (Greylisting 시작)
     if (black_node == NULL) {
+        // [버그 수정] DNS(UDP)는 TCP 헤더가 없으므로 토큰 발급·RST 주입 대상이 아님.
+        // 기존 코드는 UDP 에서도 토큰을 먼저 발급해, 2초 규칙에 걸리면 tcp=NULL 로 inject_rst 를 호출해 세그폴트가 났음
+        // (DNS 파싱이 안 되던 동안은 이 경로에 오지 않아 드러나지 않았음).
+        // 또 DNS 가 토큰을 써 버리면 바로 뒤따르는 HTTP 요청이 2초 규칙에 걸려 안내 페이지 대신 RST 만 받게 됨.
+        // → UDP 는 AI 큐에만 넣고(중복 방지를 위해 PENDING 등록) 바로 반환.
+        if (ip->ip_p == IPPROTO_UDP) {
+            insert_hash_table(ctx->black_manager.active_shield, check_site, LOG_PENDING, -1);
+            push_to_ai_task_queue(ctx, check_site);
+            g_st[ST_TO_AI]++;
+            return;
+        }
+
         //토큰발급
         u_int token = check_and_generate_token(ctx, host_id);
             if (token == 0) {
@@ -176,6 +210,7 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
             insert_hash_table(ctx->black_manager.active_shield, check_site, LOG_PENDING,-1);
         }
         push_to_ai_task_queue(ctx, check_site); 
+        g_st[ST_TO_AI]++;
 
         if (ip->ip_p == IPPROTO_UDP) return; 
         else if (ip->ip_p == IPPROTO_TCP) {
@@ -185,6 +220,7 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
         }
     } 
     else if (black_node->block_type == LOG_PENDING) {
+      g_st[ST_PENDING]++;
       if (ip->ip_p == IPPROTO_TCP) {
         //토큰발급
         u_int token = check_and_generate_token(ctx, host_id);
@@ -202,25 +238,27 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
     //정상 통과 및 로깅
     NORMAL_PASS_LOGIC:
+    if (ip->ip_p != IPPROTO_TCP) g_st[ST_UDP_NOLOG]++;
     if (ip->ip_p == IPPROTO_TCP) {
 
       // 1. 자기 자신(웹 포털 192.168.3.243)로 향하는 트래픽이면 무시! (부메랑 버그 차단)
         // if (strstr(check_site, "192.168.3.243") != NULL) return;
 
-      if (payload_size < 4 || strncmp(payload_start, "GET ", 4) != 0 || memmem(payload_start, payload_size, "Accept: text/html", 17) == NULL) return;
+      if (payload_size < 4 || strncmp(payload_start, "GET ", 4) != 0 || memmem(payload_start, payload_size, "Accept: text/html", 17) == NULL) { g_st[ST_PASS_SKIP]++; return; }
       
       int is_refresh = (memmem(payload_start, payload_size, "Cache-Control: max-age=0", 24) != NULL) ||
                         (memmem(payload_start, payload_size, "Cache-Control: no-cache", 23) != NULL);
 
       if (!is_refresh) {
-        if (memmem(payload_start, payload_size, "Referer: ", 9) != NULL) return;
-        if (time(NULL) - ctx->auth.records[host_id].last_log_time <= 3) return; 
+        if (memmem(payload_start, payload_size, "Referer: ", 9) != NULL) { g_st[ST_PASS_SKIP]++; return; }
+        if (time(NULL) - ctx->auth.records[host_id].last_log_time <= 3) { g_st[ST_PASS_SKIP]++; return; }
       }
 
       ctx->auth.records[host_id].last_log_time = time(NULL);
       
       // SYSTEM_LOG(LOG_INFO, "[로그찍히나] 도메인: %s (Type: %d)", check_site, white_node->block_type);
       push_to_log_queue(ctx, inet_ntoa(ip->ip_src), check_site, white_node->block_type, white_node->ai_score); 
+      g_st[ST_PASS_LOGGED]++;
     }
   }
 
@@ -228,6 +266,7 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
   // is_authenticated에 2가들어와 걸림 다른 위협접근도 일로오게해서 사유만
   // 다르게 보내면될거같음
   else {
+        if (is_authenticated == 2) g_st[ST_MAC_MISMATCH]++; else g_st[ST_UNAUTH]++;
         // TCP의 HTTP GET 요청일 때만 리다이렉션을 수행합니다.
         if (ip->ip_p == IPPROTO_TCP) {
             // 이미 포털(192.168.3.243)을 향하는 패킷이거나 GET이 아니면 RST만 쏘고 무시

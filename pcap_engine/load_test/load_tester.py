@@ -11,8 +11,13 @@ import time
 # ---------------------------------------------------------
 # 설정 (본인 환경에 맞게 인터페이스 수정)
 # ---------------------------------------------------------
-TARGET_IFACE = "eno2"
-TEST_DURATION = 60         
+import os
+TARGET_IFACE = os.environ.get("TARGET_IFACE", "eno2")  # 환경변수로 변경 가능 (예: 가상 랜선 veth)
+TEST_DURATION = int(os.environ.get("TEST_DURATION", "60"))  # 환경변수로 변경 가능
+# 인자로도 지정 가능: python3 load_tester.py [NIC] [초]  (sudo 로 실행할 때 env 없이 넘기기 위함)
+import sys
+if len(sys.argv) > 1: TARGET_IFACE = sys.argv[1]
+if len(sys.argv) > 2: TEST_DURATION = int(sys.argv[2])         
 POOL_SIZE = 1500       # 메모리에 미리 만들어둘 패킷의 개수 (속도 향상의 핵심)
 
 BENIGN_DOMAINS = [
