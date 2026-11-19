@@ -692,4 +692,8 @@ if __name__ == "__main__":
   threading.Thread(target=token_uds_server, daemon=True).start()  # 토큰 수신
   threading.Thread(target=master_sync_thread, daemon=True).start()  # 무적 동기화
   threading.Thread(target=batch_timer_thread, daemon=True).start()
-  app.run(host="0.0.0.0", port=5000)
+  # Flask 개발 서버(app.run) 대신 운영용 WSGI 서버 Waitress 사용.
+  # 주의: 이 프로세스는 로그 버퍼(메모리)와 /tmp 의 UDS 소켓을 직접 소유하므로
+  #       gunicorn 처럼 여러 프로세스로 띄우면 버퍼가 갈라지고 소켓을 서로 빼앗음 → 단일 프로세스 + 스레드 구조 유지
+  from waitress import serve
+  serve(app, host="0.0.0.0", port=int(os.environ.get("PCAP_PROXY_PORT", "5000")), threads=8)
