@@ -6,6 +6,7 @@
 #   ./measure/run_measure.sh bench m3 m4     # root 권한 필요 없음
 #   ./measure/run_measure.sh m6 m7           # 엔진·valgrind·load_tester·종료 신호만 내부에서 sudo 로 실행
 #   ./measure/run_measure.sh all
+#   ./measure/run_measure.sh check         # M6·M7 전에 sudo 권한만 점검 (측정 안 함)
 # sudo 가 필요한 명령 (sudoers 에 허용돼 있어야 함 — measure/README.md 참고):
 #   <엔진 절대경로>/bin/my_pcap_app, valgrind, <LOAD_PY> load_tester.py, pkill
 #
@@ -27,7 +28,7 @@ cd "$(dirname "$0")/.." || exit 1
 ROOT=$(pwd); ENG_DIR=$ROOT/pcap_c_server; LT=$ROOT/load_test
 OUT=$ROOT/measure/results/$(date +%Y%m%d_%H%M%S); mkdir -p "$OUT"
 RUNS=${RUNS:-3}; LOAD_SECONDS=${LOAD_SECONDS:-60}; VG_SECONDS=${VG_SECONDS:-30}
-SUDO=sudo; [ "$(id -u)" = 0 ] && SUDO=""   # root 로 실행하면 sudo 생략
+SUDO="sudo -n"; [ "$(id -u)" = 0 ] && SUDO=""   # -n: 비밀번호를 묻지 않고 바로 실패   # root 로 실행하면 sudo 생략
 # sudoers 는 '절대경로'로 명령을 비교하므로 파이썬 경로를 절대경로로 고정
 LOAD_PY=$(command -v "${LOAD_PY:-python3}"); M3_PY=$(command -v "${M3_PY:-python3}")
 ENG_BIN="$ENG_DIR/bin/my_pcap_app"
@@ -96,6 +97,7 @@ engine_run() {  # $1=이름 $2=부하초 $3=valgrind(0/1)
   fi
   auth_hosts >> "$OUT/run.log" 2>&1; sleep 1
   (cd "$LT" && $SUDO "$LOAD_PY" "$LT/load_tester.py" "${LOAD_IFACE:-eno2}" "$secs") > "$OUT/${name}_load.log" 2>&1
+  grep -q "누적 발송" "$OUT/${name}_load.log" || log "  ⚠ $name: 부하 발생기가 패킷을 못 보냈습니다 → ${name}_load.log 확인 (이 회차 결과는 무효)"
   sleep 3; $SUDO pkill -INT -x my_pcap_app; $SUDO pkill -INT -f "valgrind.*my_pcap_app"
   for _ in $(seq 1 60); do pgrep -x my_pcap_app >/dev/null || pgrep -f "valgrind.*my_pcap_app" >/dev/null || break; sleep 1; done
   $SUDO pkill -9 -x my_pcap_app 2>/dev/null
@@ -103,9 +105,34 @@ engine_run() {  # $1=이름 $2=부하초 $3=valgrind(0/1)
   { echo "## $name"; echo; echo '```'; grep "누적 발송" "$OUT/${name}_load.log"; sed -n '/\[측정\] 스트레스 테스트 결과/,/^=*$/p' "$elog" | grep -v "퇴근"; echo '```'; } >> "$OUT/m6_summary.md"
 }
 
+# sudo 사전 점검: 실제로 실행할 명령 그대로(인자 포함) 비밀번호 없이 허용되는지 확인. 하나라도 막히면 측정하지 않고 멈춤
+sudo_check() {
+  [ -z "$SUDO" ] && return 0
+  local bad=0 vgbin pkbin
+  vgbin=$(command -v valgrind || echo /usr/bin/valgrind); pkbin=$(command -v pkill || echo /usr/bin/pkill)
+  local -a cmds=(
+    "$ENG_BIN"
+    "$LOAD_PY $LT/load_tester.py ${LOAD_IFACE:-eno2} $LOAD_SECONDS"
+    "$LOAD_PY $LT/load_tester.py ${LOAD_IFACE:-eno2} $VG_SECONDS"
+    "$vgbin --leak-check=full --show-leak-kinds=all --log-file=/tmp/captive_valgrind.txt $ENG_BIN"
+    "$pkbin -INT -x my_pcap_app"
+    "$pkbin -9 -x my_pcap_app"
+    "$pkbin -INT -f valgrind.*my_pcap_app"
+  )
+  log "sudo 사전 점검 (비밀번호 없이 허용되는지)"
+  for c in "${cmds[@]}"; do
+    # shellcheck disable=SC2086
+    if sudo -n -l $c >/dev/null 2>&1; then log "  OK    sudo $c"; else log "  막힘  sudo $c"; bad=1; fi
+  done
+  if [ $bad = 1 ]; then
+    log "→ '막힘' 줄이 sudoers 에 없습니다(인자까지 똑같아야 함). 이 run.log 를 관리자/Claude 에게 보여 주세요. 측정을 시작하지 않고 멈춥니다."
+    return 1
+  fi
+}
+if want check; then sudo_check; log "점검 끝"; exit 0; fi
 if want m6 || want m7; then
-  log "load_tester 파이썬: $LOAD_PY  /  엔진: $ENG_BIN  (sudoers 에 이 절대경로가 있어야 함)"
-  if [ -n "$SUDO" ]; then log "sudo 권한 확인 (비밀번호를 물으면 입력)"; sudo -v 2>/dev/null || log "  (sudo -v 실패 — 명령별 NOPASSWD 로 허용돼 있으면 그대로 진행됩니다. 막히면 measure/README.md '권한' 절 참고)"; fi
+  log "load_tester 파이썬: $LOAD_PY  /  엔진: $ENG_BIN"
+  sudo_check || exit 1
 fi
 if want m6; then
   log "M6: make (엔진)"; make -C "$ENG_DIR" >> "$OUT/run.log" 2>&1 || { log "엔진 빌드 실패"; exit 1; }
