@@ -237,3 +237,5 @@ dmypy.json
 cython_debug/
 # 측정 결과물 (run_measure.sh 가 생성)
 pcap_engine/measure/results/
+# C 엔진 빌드 결과물 (make 로 생성)
+pcap_engine/pcap_c_server/bin/
