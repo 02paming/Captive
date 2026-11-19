@@ -1,4 +1,4 @@
-# Captive — SecureTech WAS 패킷 제어 엔진
+# SecureTech — C 패킷 제어 엔진 (Captive)
 
 ![C](https://img.shields.io/badge/C-00599C?style=for-the-badge&logo=c&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
@@ -6,7 +6,7 @@
 ![Scikit-Learn](https://img.shields.io/badge/Scikit_Learn-F7931E?style=for-the-badge&logo=scikit-learn&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
 
-> **L3 스위치 포트 미러링으로 사내망 트래픽 사본을 분석하고, Raw Socket 으로 TCP RST·HTTP 302 를 주입해 차단하는 Out-of-Path 사내망 접근 통제 시스템** — 그중 **패킷 제어 엔진(C) · AI 판정 서버(Python) · 캡티브 포털 프록시(Flask)** 를 담은 저장소입니다.
+> **L3 스위치 포트 미러링으로 사내망 트래픽 사본을 분석하고, Raw Socket 으로 TCP RST·HTTP 302 를 주입해 차단하는 Out-of-Path 사내망 접근 통제 시스템** — **SecureTech** 중 **C 패킷 제어 엔진 · AI 판정 서버(Python) · 캡티브 포털 프록시(Flask)** 를 담은 저장소입니다.
 
 - 4인 팀 프로젝트 · 2026.10.01 ~ 2026.11.20
 - 관리자 웹(React)·백엔드(Django)·DB 동기화 서버는 [SecureTech_WAS](https://github.com/02paming/SecureTech_WAS) 저장소에 있습니다.
