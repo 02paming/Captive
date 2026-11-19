@@ -186,6 +186,18 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 
     // [4계급 미지 도메인] 화이트/블랙 어디에도 없음 (Greylisting 시작)
     if (black_node == NULL) {
+        // [버그 수정] DNS(UDP)는 TCP 헤더가 없으므로 토큰 발급·RST 주입 대상이 아님.
+        // 기존 코드는 UDP 에서도 토큰을 먼저 발급해, 2초 규칙에 걸리면 tcp=NULL 로 inject_rst 를 호출해 세그폴트가 났음
+        // (DNS 파싱이 안 되던 동안은 이 경로에 오지 않아 드러나지 않았음).
+        // 또 DNS 가 토큰을 써 버리면 바로 뒤따르는 HTTP 요청이 2초 규칙에 걸려 안내 페이지 대신 RST 만 받게 됨.
+        // → UDP 는 AI 큐에만 넣고(중복 방지를 위해 PENDING 등록) 바로 반환.
+        if (ip->ip_p == IPPROTO_UDP) {
+            insert_hash_table(ctx->black_manager.active_shield, check_site, LOG_PENDING, -1);
+            push_to_ai_task_queue(ctx, check_site);
+            g_st[ST_TO_AI]++;
+            return;
+        }
+
         //토큰발급
         u_int token = check_and_generate_token(ctx, host_id);
             if (token == 0) {
