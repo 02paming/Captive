@@ -54,8 +54,9 @@ int init_capture(EngineContext *ctx) {
     char filter_exp[] = "src net 192.168.2.0 mask 255.255.255.0 and"
                         "(tcp dst port 80 or udp dst port 53) and dst host not 192.168.3.243";
 
-    const char *mir_dev = "eno2";
-    const char *inject_dev = "eno4";
+    // 기본값은 실제 장비(eno2 미러링 / eno4 주입). 환경변수로 바꾸면 가상 랜선(veth)에서 부하 테스트 가능
+    const char *mir_dev = getenv("CAPTIVE_MIR_DEV") ? getenv("CAPTIVE_MIR_DEV") : "eno2";
+    const char *inject_dev = getenv("CAPTIVE_INJECT_DEV") ? getenv("CAPTIVE_INJECT_DEV") : "eno4";
 
     ctx->mir_handle = pcap_open_live(mir_dev, BUFSIZ, 1, 1, errbuf);
     if (ctx->mir_handle == NULL) {
