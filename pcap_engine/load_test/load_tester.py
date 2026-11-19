@@ -12,7 +12,7 @@ import time
 # 설정 (본인 환경에 맞게 인터페이스 수정)
 # ---------------------------------------------------------
 TARGET_IFACE = "eno2"
-TEST_DURATION = 60         
+TEST_DURATION = 30         
 POOL_SIZE = 1500       # 메모리에 미리 만들어둘 패킷의 개수 (속도 향상의 핵심)
 
 BENIGN_DOMAINS = [

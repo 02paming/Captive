@@ -7,3 +7,5 @@
 같은 컴퓨터(서버) 안에서 eno2 랜카드를 통해 패킷을 밖으로 발송(OUT)하고 있는 패킷발생기구조를 쓰려면
 
 pcap_setdirection(ctx.mir_handle, PCAP_D_INOUT); 이렇게 수정해야함
+
+ /opt/captive_project/intranet-access-controller/pcap_engine/pcap_webServer/venv/bin/python3.9 /opt/captive_project/intranet-access-controller/pcap_engine/load_test/load_tester.py
