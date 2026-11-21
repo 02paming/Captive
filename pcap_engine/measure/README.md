@@ -64,3 +64,10 @@ sudo ./measure/veth_setup.sh down pa
 - 위 수정으로 드러난 세그폴트: 미지 도메인 분기에서 UDP 패킷에 `inject_rst(tcp=NULL)` 호출
 - `push_to_log_queue` 의 strcpy → snprintf
 - pcap_proxy: Flask 개발 서버 → Waitress
+
+## AI 입력 형식 전후 비교 (`ai_input_eval.py`)
+학습에 쓰지 않은 데이터로, 모델에 전체 도메인을 넣을 때(전)와 등록 도메인 이름만 넣을 때(후)를 비교합니다.
+```bash
+python3 measure/ai_input_eval.py --ai-dir AI_machine_learning --tranco <Tranco top-1m.csv> --n 2000 --seed 42
+```
+Tranco 목록은 https://tranco-list.eu 에서 받습니다(측정에 쓴 목록 ID: L5KW4). AI 서버 venv 의 python 으로 실행하세요(scikit-learn·tldextract 필요).

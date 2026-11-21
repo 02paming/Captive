@@ -28,9 +28,14 @@ def load_server_rules(ai_dir):
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id.startswith("REGEX_") for t in node.targets):
             keep.append(node)
-        elif isinstance(node, ast.FunctionDef) and node.name == "get_max_cons":
+        elif isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "_TLD_EXTRACT" for t in node.targets):
+            keep.append(node)
+        elif isinstance(node, ast.FunctionDef) and node.name in ("get_max_cons", "to_model_input"):
             keep.append(node)
     ns = {"re": re}
+    if any(isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "_TLD_EXTRACT" for t in n.targets) for n in keep):
+        import tldextract
+        ns["tldextract"] = tldextract
     exec(compile(ast.Module(body=keep, type_ignores=[]), src_path, "exec"), ns)
     need = ["REGEX_IP_ONLY", "REGEX_LOCAL_DOMAIN", "REGEX_TOP_SITES", "REGEX_BAD_TLD",
             "REGEX_CONSECUTIVE_NUMS", "REGEX_BAD_HYPHENS", "get_max_cons"]
@@ -101,7 +106,7 @@ def main():
         t0 = time.perf_counter()
         c = classify(d, R)
         if c == "4_AI_모델" and model is not None:
-            model.predict_proba(vec.transform([d]))
+            model.predict_proba(vec.transform([R["to_model_input"](d) if "to_model_input" in R else d]))
         el = (time.perf_counter() - t0) * 1000
         counts[c] = counts.get(c, 0) + 1
         if c != "4_AI_모델" or model is not None:
