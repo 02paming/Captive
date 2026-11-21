@@ -27,6 +27,7 @@
 
 
 #include "init_engine.h"
+#include <execinfo.h>   // 죽은 위치 출력(backtrace)
 #include "pcap_common.h"
 #include "thread_workers.h"
 #include "pcap_utils.h"
@@ -38,8 +39,20 @@ EngineContext *g_ctx = NULL;
  * @param[in] sig 발생한 시그널 번호
  *
  */
+ // 세그폴트·abort 전용: 예전엔 handle_sigint 가 처리하고 돌아가서 같은 자리에서 또 죽고를 무한 반복(CPU 100%, Ctrl+C 무시)했음
+ // → 어디서 죽었는지 함수 이름을 찍고 원래 동작(종료)으로 넘김
+ static void handle_crash(int sig) {
+    const char msg[] = "\n[치명] 엔진이 비정상 종료합니다. 죽은 위치(함수 호출 순서):\n";
+    write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    void *frames[32];
+    int n = backtrace(frames, 32);
+    backtrace_symbols_fd(frames, n, STDERR_FILENO);
+    signal(sig, SIG_DFL);
+    raise(sig);
+ }
+
  void handle_sigint(int sig) {
-    if (!g_ctx) return;
+    if (!g_ctx) _exit(130);   // 초기화 끝나기 전 Ctrl+C 면 그냥 종료 (예전엔 무시돼서 안 꺼졌음)
     
 
     SYSTEM_LOG(LOG_INFO, "[Main] 종료 신호 감지! 스레드들을 깨웁니다...");
@@ -86,10 +99,15 @@ int main(void) {
     pthread_t ai_threads[AI_WORKERS] = {0};
     WorkerArgs w_args[AI_WORKERS];
     
+    // 출력이 버퍼에 쌓여 안 보이는 일 없게 한 줄씩 바로 출력 (sudo·파일로 돌려도 진행 상황이 보이게)
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
     signal(SIGINT, handle_sigint);
     signal(SIGTERM, handle_sigint);
-    signal(SIGABRT, handle_sigint);
-    signal(SIGSEGV, handle_sigint);
+    signal(SIGABRT, handle_crash);
+    signal(SIGSEGV, handle_crash);
+    signal(SIGBUS, handle_crash);
+    signal(SIGFPE, handle_crash);
 
     // 1. 초기화 (실패 시 즉시 cleanup으로 점프)
     if (init_context(&ctx) != 0) {

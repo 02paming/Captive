@@ -1,6 +1,6 @@
 CC      = gcc
 CFLAGS  = -Wall -Wextra -g -Iinclude
-LDFLAGS = -lpcap -pthread
+LDFLAGS = -lpcap -pthread -rdynamic   # -rdynamic: 죽었을 때 함수 이름이 보이게
 
 # 폴더 변수 지정
 SRC_DIR   = src
