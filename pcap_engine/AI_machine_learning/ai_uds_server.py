@@ -9,12 +9,11 @@ import re
 import tldextract
 
 # ---------------------------------------------------------
-# 모델 입력 형식: 학습(train.py)과 같게 "등록 도메인 이름"만 넣는다.
-#   학습 데이터(dga_train_ready_korea_v2.csv)는 tldextract 의 .domain 만 남긴 형태
-#   (예: www.naver.com → naver, abc.co.kr → abc). 서버가 전체 도메인을 그대로 넣으면
-#   학습 때 없던 '.', 'www', 'com' 조각이 섞여 점수가 흔들린다.
-#   TLD(끝부분) 판단은 모델이 아니라 아래 정규식·고정/관리자 리스트가 전체 도메인으로 담당한다.
-# suffix_list_urls=() : 인터넷에서 목록을 받지 않고 패키지에 내장된 목록만 사용(분석망 오프라인 대비)
+# 모델 입력 전처리 (학습 형식이랑 맞추기)
+# 학습(train.py)은 tldextract로 껍데기 벗긴 이름만 썼음 (www.naver.com -> naver)
+# 근데 서버는 전체 도메인을 그대로 넣고 있어서 점수가 흔들렸음 -> 모델에 넣기 전에 똑같이 벗겨줌
+# TLD(.com, .xyz 등) 판단은 모델 말고 아래 정규식이랑 고정/관리자 리스트가 전체 도메인으로 담당
+# suffix_list_urls=() : 인터넷 안 타고 패키지 내장 목록만 사용 (분석망 오프라인 대비)
 # ---------------------------------------------------------
 _TLD_EXTRACT = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None)
 
@@ -25,7 +24,7 @@ def to_model_input(domain_lower):
 # 1. 무조건 통과 (화이트리스트 - AI 연산 제외)
 REGEX_IP_ONLY = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
 REGEX_LOCAL_DOMAIN = re.compile(r"^(localhost|.*\.local|.*\.corp|.*\.internal)$")
-# 루트 도메인(naver.com)과 하위 도메인(www.naver.com) 모두 통과 — 기존 ".*\." 는 앞에 무언가가 있어야만 맞아서 naver.com 자체를 놓쳤음
+# naver.com 자체도 통과되게 수정 (기존 .*\. 는 앞에 뭐가 붙어야만 걸려서 루트 도메인을 놓쳤음)
 REGEX_TOP_SITES = re.compile(r"^(.*\.)?(google\.com|naver\.com|daum\.net|github\.com|apple\.com|googleapis\.com|googlevideo\.com|microsoft\.com|azureedge\.net|msedge\.net|windowsupdate\.com|cern\.ch)$")
 
 # 2. 즉시 차단 (블랙리스트 - AI 검사 없이 Drop)
@@ -217,7 +216,7 @@ def handle_client(conn, addr):
                 current_model, current_vec, t_black, t_black_doubt, t_white_doubt = ai_config.get_state()
 
                 # 안전하게 빌려온 객체로 분석 수행 
-                vec = current_vec.transform([to_model_input(domain_lower)]) # 학습과 같은 형식(등록 도메인 이름)으로 투입
+                vec = current_vec.transform([to_model_input(domain_lower)]) # 학습이랑 같은 형식(껍데기 벗긴 이름)으로 투입
                 score = float(current_model.predict_proba(vec)[0][1] * 100)
                 score = round(score, 2)
 
