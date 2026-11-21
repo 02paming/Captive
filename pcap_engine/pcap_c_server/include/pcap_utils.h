@@ -12,9 +12,13 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
 /* [측정용] 스트레스 테스트 카운터 */
 enum { ST_IP, ST_TCP_PAYLOAD, ST_UDP, ST_HTTP_OK, ST_DNS_OK, ST_PARSE_FAIL,
        ST_AUTH, ST_UNAUTH, ST_MAC_MISMATCH, ST_BLOCK_LOGGED, ST_BLOCK_RST_ONLY,
-       ST_PASS_LOGGED, ST_PASS_SKIP, ST_TO_AI, ST_PENDING, ST_UDP_NOLOG, ST_COUNT };
+       ST_PASS_LOGGED, ST_PASS_SKIP, ST_TO_AI, ST_PENDING, ST_UDP_NOLOG,
+       ST_DNS_WAIT, ST_DNS_RESP, ST_DNS_TO_AI, ST_NX, ST_NX_ALERT, ST_COUNT };
 extern unsigned long g_st[ST_COUNT];
 extern const char *g_st_name[ST_COUNT];
+
+// DNS 응답(서버 → 사내 PC) 처리: NXDOMAIN 집계 / 있는 도메인만 AI 요청
+void handle_dns_response(EngineContext *ctx, const struct ether_header *ethernet, const struct ip *ip, int caplen);
 extern unsigned long g_log_overflow;
 unsigned short csum(unsigned short *ptr, int nbytes);
 void inject_redirect_blocked(pcap_t *handle_inject, const struct ether_header *ethernet, const struct ip *ip, const struct tcphdr *tcp, uint32_t payload_size, u_int token);
