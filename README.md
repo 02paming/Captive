@@ -31,7 +31,7 @@
 | 패킷 제어 엔진 (`pcap_engine/pcap_c_server`, C) | 분석망 서버 | libpcap 캡처, 도메인 파싱, 해시 조회, RST·302 주입, 스레드: 패킷 1 · AI 워커 8 · UDS 명령 1 · 만료 1 · 로그 1 |
 | AI 판정 서버 (`AI_machine_learning/ai_uds_server.py`) | 분석망 서버 | 정규식·하드 룰 1차 필터 → Random Forest 점수, 모델·임계치 무중단 교체 |
 | 캡티브 포털 프록시 (`pcap_webServer/pcap_proxy.py`, Flask + Waitress) | 분석망 서버 | 인증·차단·분석 중 안내 페이지, 엔진↔백엔드 중계, 로그 묶음 전송 |
-| 동기화 백엔드 (8080) · 관리자 웹 (8000) · DB | 백엔드 PC / DB망 | [SecureTech_WAS](https://github.com/02paming/SecureTech_WAS) |
+| 동기화 백엔드 (8080) · 관리자 웹 (Nginx 80 → Gunicorn 8000) · DB | Web Server / DB Server | [SecureTech_WAS](https://github.com/02paming/SecureTech_WAS) |
 
 | 구간 | 방식 | 이유 |
 |---|---|---|
@@ -77,7 +77,9 @@
 
 ## 5. 실행
 
-요구 사항: Linux, gcc, libpcap-dev, Python 3.10+, root 권한(캡처·주입)
+요구 사항: Linux, gcc, libpcap-dev, Python 3.9+, root 권한(캡처·주입)
+
+운영 환경: Cisco Catalyst 3750G 1대 + HP DL360 Gen9 서버 3대(Web · PCAP · DB). PCAP Server — GCC 8.5.0, libpcap 1.9.1, Python 3.9.25, scikit-learn 1.6.1. 실행 순서는 AI 판정 서버 → 캡티브 포털 프록시 → 엔진(엔진이 두 서버의 UDS 소켓에 연결). 엔진 로그는 syslog(`journalctl -t pcap_engine`).
 
 ```bash
 # 1) AI 판정 서버
