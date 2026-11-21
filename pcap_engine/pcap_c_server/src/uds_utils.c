@@ -75,7 +75,8 @@ void uds_client_sock(const int ip){
 
 void uds_client_sock_log(const LogPacket* local_log){
   char msg[512];
-  
+  msg[0] = '\0';   // 아래 어느 종류에도 안 맞으면 빈 메시지 → 보내지 않음
+
   if(local_log->is_ai_blocked == 1 || local_log->is_ai_blocked == 3 || local_log->is_ai_blocked == 4) {
     sprintf(msg, "BLACK|%s|%s|%d|%.2f", local_log->client_ip, local_log->target_host, local_log->is_ai_blocked,local_log->ai_score);
   }
@@ -85,8 +86,12 @@ void uds_client_sock_log(const LogPacket* local_log){
   else if(local_log->is_ai_blocked == 99){
     sprintf(msg, "MAC|%s|%s", local_log->client_ip, local_log->target_host);
   }
-  
+  else if(local_log->is_ai_blocked == LOG_NX_ALERT){
+    // NXDOMAIN 급증 알림: NXD|IP|MAC|횟수|구간초|예시도메인들
+    snprintf(msg, sizeof(msg), "NXD|%s|%s", local_log->client_ip, local_log->target_host);
+  }
 
+  if (msg[0] == '\0') return;
   send_to_uds(msg);
 }
 

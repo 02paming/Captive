@@ -57,6 +57,7 @@
 - 모델 파일은 **락 밖에서 미리 읽고**, 락 안에서는 참조만 교체 → 교체 중에도 판정이 멈추지 않음. 실패 시 기존 모델 유지.
 - 모델 v1.0 (RandomForest + N-gram): 정확도 96.72%, 정밀도 97.65%, 재현율 95.73%, F1 96.68% — 테스트 39,999건 (`model/model_metrics.json`, 학습 형식인 '등록 도메인 이름' 기준)
 - 모델에는 학습과 같게 **등록 도메인 이름만** 넣음(`www.naver.com` → `naver`, `to_model_input`). TLD·전체 도메인 판단은 정규식과 고정·관리자 리스트가 담당
+- **DNS 응답(NXDOMAIN) 활용**: 엔진이 DNS 응답도 함께 캡처해, 주소가 있는 응답만 AI 로 보내고 없는 도메인은 판정을 생략. 대신 PC별로 NXDOMAIN 수를 세어 기준(기본 60초에 20회)을 넘으면 '감염 의심' 알림 1건을 백엔드 `unauth_threat_log`(위협 종류 `DGA_NXDOMAIN`)에 남김 — DGA 악성코드는 없는 도메인을 대량 조회하다 등록된 하나에 접속하기 때문
 
 ### 로그 묶음 전송 (`pcap_proxy.py`)
 - 100건이 차거나 1초가 지나면 한 번에 백엔드로 전송, 백엔드는 `executemany` 로 INSERT.
@@ -98,6 +99,8 @@ cd pcap_engine/pcap_c_server && make && sudo ./bin/my_pcap_app
 |---|---|---|
 | `CAPTIVE_MIR_DEV` / `CAPTIVE_INJECT_DEV` | `eno2` / `eno4` | 엔진 캡처·주입 NIC |
 | `PCAP_PROXY_PORT` | `5000` | 프록시 포트 |
+| `CAPTIVE_NX_THRESHOLD` / `CAPTIVE_NX_WINDOW` | `20` / `60` | 한 PC가 이 초 안에 없는 도메인(NXDOMAIN) 응답을 이 횟수 이상 받으면 '감염 의심' 알림 1건 |
+| `CAPTIVE_DNS_QUERY_AI` | `0` | `1`이면 예전처럼 DNS 질의 시점에 AI 요청 (DNS 응답을 미러링으로 못 받는 환경용) |
 | `TARGET_IFACE` / `TEST_DURATION` | `eno2` / `60` | 부하 테스트(`load_test/load_tester.py`) |
 
 실제 미러링 없이 테스트하려면 가상 랜선(veth): `sudo ./measure/veth_setup.sh up pa` ([measure/README.md](pcap_engine/measure/README.md) 참고).

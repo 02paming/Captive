@@ -41,6 +41,7 @@ API_WEB_ACCESS_LOG = (
   "http://192.168.3.23:8080/api/web_access_log"  # 인증된사원 웹접속로그
 )
 API_MISMATCH_LOG = "http://192.168.3.23:8080/api/mac_mismatch_log" #인증된ip와 맞지않는 맥이들어옴
+API_THREAT_LOG = "http://192.168.3.23:8080/api/threat_log"  # 사내 위협 탐지 로그 (NXDOMAIN 급증 등)
 
 # C 엔진이 발급한 일회용 토큰을 임시 저장할 메모리 공간
 valid_tokens = set()
@@ -587,6 +588,31 @@ def handle_uds_client(conn):
             try:
                 # pcap_checker.py 서버 주소와 포트(8080)에 맞게 설정하세요.
                 requests.post(API_MISMATCH_LOG, json=data, timeout=2)
+            except Exception as e:
+                print(f"[API 전송 실패] pcap_checker 서버 연결 오류: {e}")
+
+      # NXDOMAIN 급증 알림 (감염 의심 PC) - 드물게 오므로 묶지 않고 바로 전달
+      # ["NXD", "192.168.2.34", "00:11:22:33:44:22", "20", "60", "a.com,b.net,..."]
+      elif command == "NXD" and len(parts) >= 5:
+            client_ip = parts[1]
+            client_mac = parts[2]
+            nx_count = parts[3]
+            window_sec = parts[4]
+            samples = parts[5].replace(",", ", ") if len(parts) >= 6 else ""
+            detail = f"{window_sec}초 안에 없는 도메인 {nx_count}회 이상 조회 (감염 의심)"
+            if samples:
+                detail += f" · 예: {samples}"
+
+            data = {
+                "ip_address": client_ip,
+                "mac_address": client_mac,
+                "threat_type": "DGA_NXDOMAIN",
+                "target_info": detail[:255],
+                "action_taken": "DETECTED",  # 화면에서 "위협 탐지"로 표시 (차단은 하지 않음)
+            }
+            print(f"\n[UDS 수신] NXDOMAIN 급증 -> IP: {client_ip} / {nx_count}회")
+            try:
+                requests.post(API_THREAT_LOG, json=data, timeout=2)
             except Exception as e:
                 print(f"[API 전송 실패] pcap_checker 서버 연결 오류: {e}")
 

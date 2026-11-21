@@ -13,6 +13,13 @@ int init_context(EngineContext *ctx) {
     ctx->end_time = 18;
     ctx->expire_interval = 600;
 
+    // NXDOMAIN 감시 기본값 (환경변수로 조절 가능)
+    ctx->nx_threshold = getenv("CAPTIVE_NX_THRESHOLD") ? atoi(getenv("CAPTIVE_NX_THRESHOLD")) : 20;
+    ctx->nx_window = getenv("CAPTIVE_NX_WINDOW") ? atoi(getenv("CAPTIVE_NX_WINDOW")) : 60;
+    if (ctx->nx_threshold <= 0) ctx->nx_threshold = 20;
+    if (ctx->nx_window <= 0) ctx->nx_window = 60;
+    ctx->dns_query_ai = getenv("CAPTIVE_DNS_QUERY_AI") ? atoi(getenv("CAPTIVE_DNS_QUERY_AI")) : 0;
+
     pthread_mutex_init(&ctx->auth.lock, NULL);
     pthread_condattr_t attr;
     pthread_condattr_init(&attr);
@@ -51,8 +58,10 @@ int init_context(EngineContext *ctx) {
 int init_capture(EngineContext *ctx) {
     char errbuf[PCAP_ERRBUF_SIZE];
     struct bpf_program filter;
-    char filter_exp[] = "src net 192.168.2.0 mask 255.255.255.0 and"
-                        "(tcp dst port 80 or udp dst port 53) and dst host not 192.168.3.243";
+    // 1) 사내 PC가 보내는 HTTP·DNS 질의  2) DNS 서버가 사내 PC로 돌려주는 응답 (NXDOMAIN 판단용, 스위치 미러링이 Both 라 같이 들어옴)
+    char filter_exp[] = "(src net 192.168.2.0 mask 255.255.255.0 and"
+                        " (tcp dst port 80 or udp dst port 53) and dst host not 192.168.3.243)"
+                        " or (udp src port 53 and dst net 192.168.2.0 mask 255.255.255.0)";
 
     // 기본값은 실제 장비(eno2 미러링 / eno4 주입). 환경변수로 바꾸면 가상 랜선(veth)에서 부하 테스트 가능
     const char *mir_dev = getenv("CAPTIVE_MIR_DEV") ? getenv("CAPTIVE_MIR_DEV") : "eno2";

@@ -1,6 +1,7 @@
 #include "pcap_common.h"
 #include "hash_manager.h"
 #include "pcap_utils.h"
+#include <ctype.h>
 
 // time_t last_time[256] = {0}; // IP별 마지막 접속 시간(초) 기록
 
@@ -12,7 +13,9 @@ const char *g_st_name[ST_COUNT] = {
   "인증된 PC", "미인증 PC", "MAC 불일치",
   "차단: 302+로그", "차단: RST만(2초 내 재요청)",
   "통과: 로그 큐에 넣음", "통과: 로그 생략(3초 중복·Referer·GET 아님)",
-  "미지 도메인 → AI 큐", "PENDING(AI 판정 대기)", "UDP 처리 후 로그 없음"
+  "미지 도메인 → AI 큐", "PENDING(AI 판정 대기)", "UDP 처리 후 로그 없음",
+  "DNS 질의: 응답 기다림(AI 보류)", "DNS 응답 수신", "DNS 응답(주소 있음) → AI 큐",
+  "NXDOMAIN 응답(AI 안 보냄)", "NXDOMAIN 급증 알림"
 };
 
 void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u_char *packet) {
@@ -29,6 +32,15 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
   if (header->caplen < sizeof(struct ether_header) + sizeof(struct ip)) return;
   struct ip *ip = (struct ip *)(packet + sizeof(struct ether_header));
   int ip_size = ip->ip_hl * 4;
+
+  // DNS 응답(DNS 서버 → 사내 PC)은 출발지가 DNS 서버라서 아래 인증·MAC 검사(출발지 기준)를 타면 안 됨 → 따로 처리
+  if (ip->ip_p == IPPROTO_UDP && header->caplen >= sizeof(struct ether_header) + ip_size + 8) {
+    const u_char *udp = (const u_char *)ip + ip_size;
+    if (((udp[0] << 8) | udp[1]) == 53) {
+      handle_dns_response(ctx, ethernet, ip, header->caplen);
+      return;
+    }
+  }
 
   struct tcphdr *tcp = NULL;
   u_char *payload = NULL;
@@ -191,10 +203,16 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
         // (DNS 파싱이 안 되던 동안은 이 경로에 오지 않아 드러나지 않았음).
         // 또 DNS 가 토큰을 써 버리면 바로 뒤따르는 HTTP 요청이 2초 규칙에 걸려 안내 페이지 대신 RST 만 받게 됨.
         // → UDP 는 AI 큐에만 넣고(중복 방지를 위해 PENDING 등록) 바로 반환.
+        // [NXDOMAIN 반영] 질의 시점엔 그 도메인이 실제로 있는지 모름 → DNS 응답을 보고 '주소 있음'일 때만 AI 요청 (handle_dns_response)
+        // 응답을 못 받는 환경이면 CAPTIVE_DNS_QUERY_AI=1 로 예전처럼 질의 시점에 요청
         if (ip->ip_p == IPPROTO_UDP) {
-            insert_hash_table(ctx->black_manager.active_shield, check_site, LOG_PENDING, -1);
-            push_to_ai_task_queue(ctx, check_site);
-            g_st[ST_TO_AI]++;
+            if (ctx->dns_query_ai) {
+                insert_hash_table(ctx->black_manager.active_shield, check_site, LOG_PENDING, -1);
+                push_to_ai_task_queue(ctx, check_site);
+                g_st[ST_TO_AI]++;
+            } else {
+                g_st[ST_DNS_WAIT]++;
+            }
             return;
         }
 
@@ -303,4 +321,110 @@ void packet_handler(u_char *user_args, const struct pcap_pkthdr *header, const u
             inject_rst(handle_inject, ethernet, ip, tcp, payload_size);
         }
     }
+}
+
+// =====================================================
+// DNS 응답 처리 (NXDOMAIN 감시)
+//  - NXDOMAIN(없는 도메인): AI 로 안 보냄(판정 1건 약 88ms 절약). 대신 PC별로 세다가
+//    구간(기본 60초) 안에 기준(기본 20회)을 넘으면 '감염 의심' 알림 1건만 보냄
+//    → DGA 악성코드는 없는 도메인을 수십~수백 번 조회하다가 등록된 하나(명령 서버)에 접속함
+//    → 크롬도 시작할 때 무작위 도메인 3개 정도를 일부러 조회하니까 기준은 넉넉하게
+//  - 정상 응답(주소 있음): 처음 보는 도메인이면 이때 AI 요청 (예전엔 질의 시점에 보냈음)
+// =====================================================
+void handle_dns_response(EngineContext *ctx, const struct ether_header *ethernet, const struct ip *ip, int caplen) {
+  int ip_size = ip->ip_hl * 4;
+  int udp_size = 8;
+  int dns_len = ntohs(ip->ip_len) - ip_size - udp_size;
+  int avail = caplen - (int)sizeof(struct ether_header) - ip_size - udp_size;
+  if (dns_len > avail) dns_len = avail;          // 잘려서 캡처된 패킷 대비
+  if (dns_len <= 12) return;                      // DNS 헤더(12바이트)도 없음
+
+  const u_char *dns = (const u_char *)ip + ip_size + udp_size;
+  int flags = (dns[2] << 8) | dns[3];
+  if (!(flags & 0x8000)) return;                  // QR 비트 0 = 질의 → 응답 아님
+  int rcode = flags & 0x000F;                     // 3 = NXDOMAIN
+  int qdcount = (dns[4] << 8) | dns[5];
+  int ancount = (dns[6] << 8) | dns[7];
+  if (qdcount < 1) return;
+  g_st[ST_DNS_RESP]++;
+
+  // 응답 안에도 질문(도메인)이 그대로 들어있음: 3www5naver3com0 -> www.naver.com
+  char name[128];
+  int i = 12, j = 0;
+  while (i < dns_len && dns[i] != 0 && j < (int)sizeof(name) - 1) {
+    int label_len = dns[i];
+    if (label_len & 0xC0) return;                 // 질문부에 압축 포인터는 안 옴 → 이상한 패킷은 버림
+    i++;
+    for (int k = 0; k < label_len && i < dns_len && j < (int)sizeof(name) - 1; k++) {
+      name[j++] = (char)tolower(dns[i++]);
+    }
+    if (i < dns_len && dns[i] != 0 && j < (int)sizeof(name) - 1) name[j++] = '.';
+  }
+  name[j] = '\0';
+  if (j == 0) return;
+  i++;                                            // 도메인 끝 0 바이트
+  int qtype = (i + 1 < dns_len) ? ((dns[i] << 8) | dns[i + 1]) : 0;
+
+  // 응답의 목적지가 사내 PC
+  const unsigned char *dst = (const unsigned char *)&ip->ip_dst.s_addr;
+  int host_id = dst[3];
+  if (host_id <= 0 || host_id >= 255) return;
+
+  if (rcode == 3) {
+    g_st[ST_NX]++;
+    NxTracker *t = &ctx->nx[host_id];
+    time_t now = time(NULL);
+    if (t->window_start == 0 || now - t->window_start >= ctx->nx_window) {
+      memset(t, 0, sizeof(*t));                   // 새 구간 시작
+      t->window_start = now;
+    }
+    if (strcmp(t->last_name, name) == 0) return;  // A·AAAA 로 같은 도메인 응답이 연달아 오면 1번만 셈
+    snprintf(t->last_name, sizeof(t->last_name), "%s", name);
+    t->count++;
+    if (t->nsamples < NX_SAMPLE_MAX) {
+      snprintf(t->samples[t->nsamples++], sizeof(t->samples[0]), "%s", name);
+    }
+
+    if (t->count >= ctx->nx_threshold && !t->alerted) {
+      t->alerted = 1;                             // 이번 구간엔 1건만
+      g_st[ST_NX_ALERT]++;
+
+      // 로그 큐 한 칸(target_host 128바이트)에 "MAC|횟수|구간초|예시1,예시2,..." 로 담아서 보냄
+      char mac[18];
+      mac_to_string(ethernet->ether_dhost, mac);
+      char info[128];
+      int n = snprintf(info, sizeof(info), "%s|%d|%d|", mac, t->count, ctx->nx_window);
+      for (int s = 0; s < t->nsamples && n < (int)sizeof(info) - 1; s++) {
+        int w = snprintf(info + n, sizeof(info) - n, "%s%s", s ? "," : "", t->samples[s]);
+        if (w < 0 || w >= (int)sizeof(info) - n) { info[n] = '\0'; break; }  // 칸이 모자라면 그 예시는 뺌
+        n += w;
+      }
+      char ip_str[16];
+      snprintf(ip_str, sizeof(ip_str), "%s", inet_ntoa(ip->ip_dst));
+      push_to_log_queue(ctx, ip_str, info, LOG_NX_ALERT, (double)t->count);
+      SYSTEM_LOG(LOG_WARNING, "[보안경고] NXDOMAIN 급증(감염 의심)! IP: %s, %d초 안에 %d회", ip_str, ctx->nx_window, t->count);
+    }
+    return;
+  }
+
+  // 주소가 있는 정상 응답(A·AAAA)만 AI 대상 — 질의 시점에 이미 보내는 설정이면 패스
+  if (rcode != 0 || ancount == 0 || (qtype != 1 && qtype != 28) || ctx->dns_query_ai) return;
+
+  // 미인증 PC는 어차피 포털로 보내지니까 AI 판정 불필요 (예전 질의 처리와 같은 기준)
+  pthread_mutex_lock(&ctx->auth.lock);
+  int is_active = ctx->auth.records[host_id].is_active;
+  pthread_mutex_unlock(&ctx->auth.lock);
+  if (is_active != 1) return;
+
+  HashNode *w = lookup_hash_table(ctx->white_manager.active_shield, name);
+  HashNode *b = lookup_hash_table(ctx->black_manager.active_shield, name);
+  if (w == NULL && b == NULL) {
+    w = lookup_hash_table(ctx->fixed_white_shield, name);
+    b = lookup_hash_table(ctx->fixed_black_shield, name);
+  }
+  if (w != NULL || b != NULL) return;             // 이미 아는 도메인 (판정 대기 PENDING 포함)
+
+  insert_hash_table(ctx->black_manager.active_shield, name, LOG_PENDING, -1);
+  push_to_ai_task_queue(ctx, name);
+  g_st[ST_DNS_TO_AI]++;
 }

@@ -53,6 +53,7 @@
 #define LOG_AI_DOUBT_PASS 5   // AI 의심 정상 통과
 #define LOG_AI_PASS 6         // AI 정상 통과
 #define LOG_MAC_MISMATCH 99   // 비정상 맥 로그
+#define LOG_NX_ALERT 98       // 없는 도메인(NXDOMAIN) 급증 알림 (감염 의심 PC)
 
 
 //배열연결리스트 + 해쉬테이블 구조
@@ -127,6 +128,17 @@ typedef struct {
 } AIQueue;
 
 
+// 없는 도메인(NXDOMAIN) 응답을 PC별로 세는 칸 (패킷 스레드 혼자만 만지므로 락 없음)
+#define NX_SAMPLE_MAX 5
+typedef struct {
+    time_t window_start;                 // 이번 집계 구간 시작 시각
+    int count;                           // 구간 안 NXDOMAIN 응답 수
+    int alerted;                         // 이번 구간에 이미 알림 보냈는지 (도배 방지)
+    char last_name[128];                 // 직전 NXDOMAIN 도메인 (A·AAAA 중복 응답은 1번만 셈)
+    char samples[NX_SAMPLE_MAX][64];     // 알림에 같이 보낼 예시 도메인
+    int nsamples;
+} NxTracker;
+
 typedef struct {
     // [하드웨어 리소스]
     pcap_t *mir_handle;
@@ -153,6 +165,12 @@ typedef struct {
     // [스레드 간 통신 큐]
     SharedLogQueue log_queue;
     AIQueue ai_queue;
+
+    // [DNS 응답 / NXDOMAIN 감시]
+    NxTracker nx[256];       // PC(호스트 번호)별 NXDOMAIN 집계
+    int nx_threshold;        // 구간 안에 이 횟수를 넘으면 알림 (기본 20회)
+    int nx_window;           // 집계 구간 초 (기본 60초)
+    int dns_query_ai;        // 1이면 예전처럼 DNS 질의 시점에 AI 요청 (응답을 못 받는 환경용)
 } EngineContext;
 
 
